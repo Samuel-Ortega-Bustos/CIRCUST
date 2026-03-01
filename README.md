@@ -48,6 +48,7 @@ Se ha partido de los archivos de datos y resultados generados por la autora (en 
 - Validación reproducible mediante notebooks que replican las figuras del paper.
 
 ## 📦 Estructura del repositorio
+```bash
 circust/
 ├── README.md
 ├── LICENSE
@@ -71,3 +72,4 @@ circust/
 ├── scripts/ # Scripts para ejecutar análisis completos
 │ └── run_circust.py
 └── data/ # Carpeta para datos (ignorada por git)
+```
