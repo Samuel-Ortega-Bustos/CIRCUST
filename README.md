@@ -55,8 +55,8 @@ circust/
 ├── .gitignore
 ├── requirements.txt # Dependencias Python
 ├── setup.py # Instalación como paquete
-├── circust/ # Paquete principal
-│ ├── init.py
+├── src/ # Paquete principal
+│ ├── __init__.py
 │ ├── preprocessing.py
 │ ├── cpca.py
 │ ├── outlier_detection.py
