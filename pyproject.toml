@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "circust"
+version = "0.1.0"
+description = "Implementación en Python de la metodología CIRCUST"
+readme = "README.md"
+authors = [
+    {name = "Samuel Ortega", email = "samuel.ortega.bustos@outlook.es"}
+]
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.21",
+    "pandas>=1.3",
+    "scipy>=1.7",
+    "scikit-learn>=1.0",
+    "matplotlib>=3.4",
+    # "pyreadr>=0.4.2",  # opcional, descomenta si la necesitas
+]
+
+[project.urls]
+Homepage = "https://github.com/Samuel-Ortega-Bustos/CIRCUST"
+Repository = "https://github.com/Samuel-Ortega-Bustos/CIRCUST.git"
+
+[tool.setuptools.packages.find]
+include = ["circust*"]
