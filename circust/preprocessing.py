@@ -2,7 +2,8 @@
 import pathlib
 from typing import Optional
 from dataclasses import dataclass, field
-from constants import ZERO_COUNT_THRESHOLD,NORM_MIN,NORM_MAX
+from circust.constants import ZERO_COUNT_THRESHOLD,NORM_MIN,NORM_MAX
+from scipy.stats import median_abs_deviation
 
 import pandas as pd
 import numpy as np
@@ -115,7 +116,18 @@ def load_expression_matrix(
     # This is the standard layout: first column = gene names,
     # remaining columns = samples.
     # If the caller knows their gene column by name, use that instead.
-    index_col = gene_column if gene_column is not None else None
+    if fmt in ("csv", "tsv", "excel"):
+        index_col = gene_column if gene_column is not None else 0
+    elif fmt == "parquet":
+        if gene_column is None:
+            raise ValueError(
+                "Para archivos Parquet debes especificar el nombre de la columna "
+                "que contiene los identificadores de genes mediante el parámetro 'gene_column'."
+            )
+        index_col = gene_column
+    else:
+        # no debería ocurrir porque ya validamos fmt
+        index_col = None
 
     # ── loading ────────────────────────────────────────────────────────────
     if fmt == "csv":
@@ -340,9 +352,134 @@ class Preprocessor:
     def _drop_unnamed(self,mat:pd.DataFrame) -> pd.DataFrame:
         """
         Remove rows whose gene symbol is NaN or an empty string.
-
-        R equivalent (lines 3914-3915):
-            indNoNames <- which(is.na(rownames(mFull0Tissue)))
-            if(length(indNoNames) > 0)
-                mFull0Tissue <- mFull0Tissue[-indNoNames, ]
         """
+
+        # a gene name is invalid if it is:
+        #   - a real NaN value in the index
+        #   - the string "nan" (happens when a NaN is cast to str)
+        #   - blank / whitespace only
+        is_invalid     = mat.index.isna() | mat.index == ""
+        
+        n_bad = int(is_invalid.sum())
+        if n_bad > 0:
+            self._log(f"  Step 1 — dropped {n_bad} gene(s) with no name")
+        
+        return mat.loc[~is_invalid]
+
+    def _drop_sparse(self, mat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+        """
+        Remove genes where more than zero_threshold of samples are zero OR NaN.
+
+        Note: the condition is strictly > so a gene at exactly 30% is kept.
+        This is preserved here: (frac > threshold), not (frac >= threshold).
+        """
+        n_samples = mat.shape[1]
+
+        # fraction of zeros and NaN per gene (row-wise)
+        zero_frac = (mat == 0).sum(axis=1) / n_samples
+        nan_frac  = mat.isna().sum(axis=1)  / n_samples
+
+        is_sparse = (zero_frac > self.zero_threshold) | (nan_frac  > self.nan_threshold)
+
+        dropped = mat.index[is_sparse].tolist()
+
+        # mirror the exact R print statement (line 3925)
+        self._log(
+            f"  Step 2 — dropped {len(dropped)} gene(s) with more than "
+            f"{int(self.zero_threshold * 100)}% zeros or NaN"
+        )
+
+        return mat.loc[~is_sparse].copy(), dropped
+    
+    def _resolve_duplicates(self, mat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+        """
+        For each gene name that appears more than once, keep the row
+        with the highest MAD and discard the rest.
+
+        MAD note:
+            R's mad(x, constant=1) = median(|x - median(x)|) with NO
+            normal-distribution correction factor.
+            Python equivalent: median_abs_deviation(x, scale=1)
+            from scipy.stats — the scale=1 argument is critical.
+        """
+        # find gene names that appear more than once
+        duplicated_mask  = mat.index.duplicated(keep=False)
+        duplicated_names = mat.index[duplicated_mask].unique().tolist()
+
+        if not duplicated_names:
+            self._log("  Step 3 — no duplicate gene names found")
+            return mat, []
+
+        self._log(
+            f"  Step 3 — resolving {len(duplicated_names)} "
+            f"duplicated gene name(s)"
+        )
+
+        # collect integer positions of rows to drop
+        rows_to_drop:  list[int] = []
+        dropped_names: list[str] = []
+
+        for gene in duplicated_names:
+            # np.where gives integer positions — needed because two rows
+            # share the same label so .loc would return both
+            positions = np.where(mat.index == gene)[0]
+
+            # compute MAD for each duplicate row using scale=1 to match R
+            mads = np.array([
+                float(median_abs_deviation(mat.iloc[pos].values, scale=1))
+                for pos in positions
+            ])
+
+            # keep the row with the highest MAD, drop the rest
+            best_position   = positions[int(np.argmax(mads))]
+            loser_positions = [p for p in positions if p != best_position]
+
+            rows_to_drop.extend(loser_positions)
+            dropped_names.extend([gene] * len(loser_positions))
+
+        # build a boolean keep-mask and apply it
+        keep_mask = np.ones(len(mat), dtype=bool)
+        keep_mask[rows_to_drop] = False
+
+        return mat.iloc[keep_mask].copy(), dropped_names
+    
+    def _normalise(self, mat: pd.DataFrame) -> pd.DataFrame:
+        """
+        Scale every gene independently to the interval [NORM_MIN, NORM_MAX] using
+        min-max normalisation.
+
+        Edge case — constant gene (min == max):
+            R's normalice() divides by zero silently (returns NaN/Inf).
+            R's safer variant normalice2() returns all zeros for this case.
+            We follow normalice2() behaviour: constant genes → all zeros.
+            This is the correct biological choice — a gene with no variance
+            carries no information for ordering.
+        """
+        values = mat.values.astype(float)
+
+        row_min = values.min(axis=1, keepdims=True)
+        row_max = values.max(axis=1, keepdims=True)
+        span    = row_max - row_min
+
+        # avoid division by zero for constant genes.
+        # We use np.errstate to suppress the numpy RuntimeWarning:
+        # np.where() evaluates BOTH branches before choosing, so the
+        # division still happens on zero-span rows — but the result is
+        # discarded. errstate tells numpy not to warn about that.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            normalised = np.where(
+                span == 0,
+                0.0,
+                2.0 * ((values - row_min) / span) - 1.0
+            )
+
+        return pd.DataFrame(normalised, index=mat.index, columns=mat.columns)
+
+    # -----------------------------------------------------------------------
+    # Utility
+    # -----------------------------------------------------------------------
+
+    def _log(self, message: str) -> None:
+        """Print only when verbose=True."""
+        if self.verbose:
+            print(message)
