@@ -358,7 +358,7 @@ class Preprocessor:
         #   - a real NaN value in the index
         #   - the string "nan" (happens when a NaN is cast to str)
         #   - blank / whitespace only
-        is_invalid     = mat.index.isna() | mat.index == ""
+        is_invalid     = (mat.index.isna()) | (mat.index.values == "")
         
         n_bad = int(is_invalid.sum())
         if n_bad > 0:
