@@ -470,7 +470,7 @@ class Preprocessor:
             normalised = np.where(
                 span == 0,
                 0.0,
-                2.0 * ((values - row_min) / span) - 1.0
+                (NORM_MAX - NORM_MIN) * ((values - row_min) / span) + NORM_MIN
             )
 
         return pd.DataFrame(normalised, index=mat.index, columns=mat.columns)
