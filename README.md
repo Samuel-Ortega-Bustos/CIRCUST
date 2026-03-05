@@ -55,7 +55,7 @@ circust/
 ├── .gitignore
 ├── requirements.txt # Dependencias Python
 ├── setup.py # Instalación como paquete
-├── src/ # Paquete principal
+├── circust/ # Paquete principal
 │ ├── __init__.py
 │ ├── preprocessing.py
 │ ├── cpca.py
@@ -71,5 +71,7 @@ circust/
 │ ├── 
 ├── scripts/ # Scripts para ejecutar análisis completos
 │ └── run_circust.py
+├── rscripts/ #Scripts de codigo original de R
+│ ├──
 └── data/ # Carpeta para datos (ignorada por git)
 ```
