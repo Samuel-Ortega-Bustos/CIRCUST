@@ -52,16 +52,20 @@ NORM_MAX = 1.0
 # CPCA (CIRCULAR PRINCIPAL COMPONENT ANALYSIS)
 # =============================================================================
 
+#Candidatos outliers
+N_OUTLIER_CANDIDATES = 8
+
 # Varianza mínima acumulada explicada por los dos primeros eigengenes
 # para considerar que la estructura circular es fiable.
 MIN_TOTAL_VAR = 0.4
 
 # Varianza mínima explicada por el segundo eigengene (debe ser al menos 0.1).
 MIN_SECOND_VAR = 0.1
-"""
+
 # Umbral de distancia radial para detección de outliers mediante CPCA.
 # Muestras con distancia al origen menor que este valor se consideran outliers.
 OUTLIER_RADIAL_THRESHOLD = 0.1
+OUTLIER_RADIAL_THRESHOLD_LOOSE = 0.15
 
 # Umbral de residuos estandarizados para detección de outliers mediante FMM.
 # Muestras con |residuo| > OUTLIER_RESIDUAL_THRESHOLD se consideran outliers.
@@ -131,7 +135,7 @@ MIN_CIRCLE_COVERAGE = 0.5  # fracción de 2π
 # - La distancia máxima entre ángulos consecutivos no debe exceder
 #   la máxima distancia observada en el orden preliminar.
 #   Este cálculo se realiza dinámicamente, no es una constante.
-"""
+
 # =============================================================================
 # OTROS
 # =============================================================================
