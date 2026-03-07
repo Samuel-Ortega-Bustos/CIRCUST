@@ -22,12 +22,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 # ---------------------------------------------------------------------------
 # Paths — all relative to the repo root
 # ---------------------------------------------------------------------------
 REPO_ROOT  = Path(__file__).parent.parent      # circust/
 DATA_PATH  = REPO_ROOT / "data" / "raw" / "matrixIn.parquet"
+#DATA_PATH  = REPO_ROOT / "data" / "raw" / "BA46_glut_sample_no_minmax.csv"
 REF_DIR    = REPO_ROOT / "validation" / "reference"
 
 # Add the circust package to sys.path so imports work without pip install
@@ -275,7 +275,7 @@ for name, py_pc, r_col in [
     ("PC2", cpca_result.pc2, r_pc["pc2"].values),
     ("PC3", cpca_result.pc3, r_pc["pc3"].values),
 ]:
-    close_pc = np.allclose(np.abs(py_pc), np.abs(r_col), atol=ATOL)
+    close_pc = np.allclose(py_pc, r_col, atol=ATOL)
     results[f"{name} loadings match"] = check(
         f"{name} loadings match |abs| (atol={ATOL:.0e})",
         close_pc,
@@ -348,6 +348,8 @@ if n_pass < n_total:
     for label, passed in results.items():
         if not passed:
             print(f"  ✗  {label}")
-    sys.exit(1)
+    sys.exit(1)   
+    
 else:
     print("✓  Python output matches R on all checks.")
+

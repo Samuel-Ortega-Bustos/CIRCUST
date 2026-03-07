@@ -25,8 +25,7 @@ Output: CPCAResult                     (sample order + outlier flags)
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
-# CORRECT — TruncatedSVD applies no centering, matches R exactly because not column centering
-from sklearn.decomposition import TruncatedSVD
+
 from circust.constants import SEED_GENES_DEFAULT,OUTLIER_RADIAL_THRESHOLD,OUTLIER_RADIAL_THRESHOLD_LOOSE,N_OUTLIER_CANDIDATES
 
 # ===========================================================================

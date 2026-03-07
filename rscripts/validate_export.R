@@ -56,8 +56,7 @@ setwd(old_wd)
 cat("  Done. normalice, centrado, obtainCPCA13, fitFMM_Par ready.\n")
 
 # ---------------------------------------------------------------------------
-coreG <- c("PER1","PER2","PER3","CRY1","CRY2","ARNTL","CLOCK",
-           "NR1D1","RORA","DBP","TEF","STAT3")
+coreG <- c("ARNTL", "DBP", "NR1D1", "NR1D2", "PER1", "PER2", "PER3","USP2", "TSC22D3", "TSPAN4")
 timing <- list()
 
 # ---------------------------------------------------------------------------

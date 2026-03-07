@@ -20,9 +20,8 @@ SEED_GENES_LARRIBA = [
 # Genes semilla propuestos por Zhang et al. (2014) - originalmente en ratón,
 # se muestran aquí como referencia (pueden necesitar conversión a humano).
 SEED_GENES_ZHANG = [
-    "Arntl", "Dbp", "Nr1d1", "Nr1d2",
-    "Per1", "Per2", "Per3",
-    "Usp2", "Tsc22d3", "Tspan4"
+    "ARNTL", "DBP", "NR1D1", "NR1D2", "PER1", "PER2", "PER3",
+    "USP2", "TSC22D3", "TSPAN4"
 ]
 
 # Genes semilla de Ruben et al. (2018) - 54 genes. Se recomienda completar
@@ -33,7 +32,7 @@ SEED_GENES_RUBEN = []  # Completa según tus necesidades
 
 # Por defecto, CIRCUST usa la lista de Larriba et al. 2023.
 # Puedes cambiar esta variable para usar otra lista.
-SEED_GENES_DEFAULT = SEED_GENES_LARRIBA
+SEED_GENES_DEFAULT = SEED_GENES_ZHANG
 
 
 # =============================================================================
