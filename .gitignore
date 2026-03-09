@@ -1,6 +1,4 @@
-/data/raw/.gitkeep
-/data/processed/.gitkeep
-
+/data/*
 *.parquet
 *.csv
 *.RData

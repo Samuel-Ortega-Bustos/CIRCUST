@@ -26,8 +26,8 @@ import pandas as pd
 # Paths — all relative to the repo root
 # ---------------------------------------------------------------------------
 REPO_ROOT  = Path(__file__).parent.parent      # circust/
-DATA_PATH  = REPO_ROOT / "data" / "raw" / "matrixIn.parquet"
-#DATA_PATH  = REPO_ROOT / "data" / "raw" / "BA46_glut_sample_no_minmax.csv"
+DATA_PATH  = REPO_ROOT / "data" / "matrixIn.parquet"
+#DATA_PATH  = REPO_ROOT / "data" / "BA46_glut_sample_no_minmax.csv"
 REF_DIR    = REPO_ROOT / "validation" / "reference"
 
 # Add the circust package to sys.path so imports work without pip install

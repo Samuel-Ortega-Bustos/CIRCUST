@@ -20,7 +20,7 @@
 
 REPO_ROOT  <- normalizePath(".")
 RSCRIPTS   <- file.path(REPO_ROOT, "rscripts")
-RDATA_PATH <- file.path(REPO_ROOT, "data", "raw", "matrixIn.RData")
+RDATA_PATH <- file.path(REPO_ROOT, "data", "matrixIn.RData")
 OUT_DIR    <- file.path(REPO_ROOT, "validation", "reference")
 
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -62,7 +62,7 @@ timing <- list()
 # ---------------------------------------------------------------------------
 cat("\nLoading matrixIn.RData ...\n")
 t0 <- proc.time()
-#matrixIn <- read.csv("~/Documents/Universidad/TFG-Statistics/CIRCUST/data/raw/BA46_glut_sample_no_minmax.csv", row.names=1)
+#matrixIn <- read.csv("~/Documents/Universidad/TFG-Statistics/CIRCUST/data/BA46_glut_sample_no_minmax.csv", row.names=1)
 load(RDATA_PATH)
 timing$load <- (proc.time() - t0)["elapsed"]
 cat(sprintf("  Loaded: %d genes x %d samples\n", nrow(matrixIn), ncol(matrixIn)))
