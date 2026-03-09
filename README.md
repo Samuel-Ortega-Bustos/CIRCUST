@@ -5,7 +5,7 @@
 [![DOI](https://img.shields.io/badge/DOI-10.1371%2Fjournal.pcbi.1011510-blue)](https://doi.org/10.1371/journal.pcbi.1011510)
 
 **Autores de la metodología original (R):** Yolanda Larriba, Ivy C. Mason, Richa Saxena, Frank A.J.L. Scheer, Cristina Rueda  
-**Implementación en Python:** [Tu Nombre] (TFG supervisado por Yolanda Larriba)
+**Implementación en Python:** Samuel Ortega Bustos (TFG supervisado por Yolanda Larriba)
 
 Este repositorio contiene una implementación en Python de la metodología **CIRCUST** (CIRCular-robUST), originalmente desarrollada en R por Yolanda Larriba y colaboradores (Larriba et al., 2023) para la reconstrucción del orden temporal de ritmos moleculares y la construcción de atlas de expresión génica circadiana en humanos.
 
