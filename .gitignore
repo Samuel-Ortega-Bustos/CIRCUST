@@ -7,3 +7,5 @@
 *.xlsx
 *.egg-info/
 __pycache__/
+/docs/*
+!docs/*.pdf
