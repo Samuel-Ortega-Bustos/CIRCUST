@@ -6,6 +6,7 @@
 *.xlsx
 *.egg-info/
 __pycache__/
-/docs/*
-!/docs/*.tex
+docs/*
+!/docs/main.tex
+!/docs/images/
 !/docs/images/*.pdf
