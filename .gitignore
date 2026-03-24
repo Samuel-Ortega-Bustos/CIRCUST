@@ -7,5 +7,5 @@
 *.egg-info/
 __pycache__/
 /docs/*
-!docs/.tex
-!docs/image/.pdf
+!/docs/*.tex
+!/docs/images/*.pdf
