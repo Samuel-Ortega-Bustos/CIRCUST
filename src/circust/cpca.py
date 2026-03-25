@@ -92,6 +92,12 @@ class CPCAResult:
     core_genes_found : List[str]
         The core genes that were actually present in the matrix.
         (Generalisation over R: R assumes all 12 are always present.)
+
+    core_matrix : pd.DataFrame, shape (n_core_genes, n_samples)
+        The normalised core-gene sub-matrix used for PCA, with gene
+        symbols as the index.  Stored so that plot_gene_panels() can
+        draw expression traces without needing to re-run extraction.
+        Set to None if CPCA was run with store_core_matrix=False.
     """
 
     sample_order:              np.ndarray
@@ -106,6 +112,7 @@ class CPCAResult:
     n_outliers:                int
     used_loose_radius:         bool
     core_genes_found:          list[str] = field(default_factory=list)
+    core_matrix:               pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def summary(self) -> str:
         lines = [
@@ -389,6 +396,7 @@ class CPCA:
             n_outliers                 = n_outliers,
             used_loose_radius          = used_loose,
             core_genes_found           = genes_found,
+            core_matrix                = core_matrix,
         )
 
     # -----------------------------------------------------------------------

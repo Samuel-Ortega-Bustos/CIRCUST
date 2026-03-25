@@ -33,8 +33,8 @@ REF_DIR    = REPO_ROOT / "validation" / "reference"
 # Add the circust package to sys.path so imports work without pip install
 sys.path.insert(0, str(REPO_ROOT / "circust"))
 
-from circust.preprocessing import load_expression_matrix, Preprocessor, PreprocessingResult
-from circust.cpca import CPCA
+from src.circust.preprocessing import load_expression_matrix, Preprocessor, PreprocessingResult
+from src.circust.cpca import CPCA
 
 # ---------------------------------------------------------------------------
 # Tolerances
