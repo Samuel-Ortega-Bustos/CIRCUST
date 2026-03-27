@@ -151,7 +151,8 @@ Entre los enfoques analíticos recientes destaca el algoritmo CIRCUST \cite{larr
     \item \textbf{Análisis de Componentes Principales Circulares (CPCA):} En un primer paso, CIRCUST selecciona un subconjunto de ``genes reloj'' centrales y aplica técnicas de reducción de dimensionalidad basadas en CPCA\cite{scholz2007}. Al extraer los dos primeros componentes principales, el algoritmo proyecta las muestras sobre el plano bidimensional delimitado por el círculo unidad. Esto proporciona un orden circular preliminar relativo entre todas las muestras.
 
 
-    \item \textbf{Aplicación del Modelo FMM:} Una vez establecido el orden circular preliminar de las muestras, CIRCUST emplea el modelo FMM (\textit{Frequency Modulated Möbius})\cite{fmmAlgorithm}. A diferencia de los modelos armónicos clásicos (como las curvas cosenoidales simples), el FMM es un modelo paramétrico no lineal altamente flexible. Esta flexibilidad le permite ajustarse a curvas de expresión génica asimétricas y con formas de onda complejas, logrando una estimación robusta y biológicamente mucho más realista de los componentes oscilatorios.
+    \item \textbf{Aplicación del Modelo FMM:} Una vez establecido el orden circular preliminar de las muestras, CIRCUST modela las curvas de expresión génica. Históricamente, este paso se ha abordado mediante modelos armónicos clásicos como el \textbf{Cosinor} \cite{cosinor}. Sin embargo, el Cosinor resulta demasiado rígido para capturar los patrones de expresión asimétricos típicos del transcriptoma, y su extensión multicomponente tiende a generar un grave sobreajuste (\textit{overfitting}). Por otro lado, enfoques no paramétricos como \textbf{ORI} (\textit{Order Restricted Inference}) \cite{larribaORI} ofrecen flexibilidad al modelar oscilaciones mediante restricciones de desigualdad, pero carecen de parámetros matemáticos directos que faciliten la comparación analítica entre distintos ritmos.
+    Para superar ambas limitaciones, CIRCUST emplea el modelo \textbf{FMM} (\textit{Frequency Modulated Möbius}) \cite{fmmAlgorithm}. Este modelo paramétrico no lineal de cinco parámetros permite deformar la onda cosenoidal clásica para ajustarse a expresiones asimétricas y complejas. Con ello se logra una estimación robusta, biológicamente realista y cuyos parámetros conservan una interpretación directa sobre la fase oscilatoria del reloj biológico.
 \end{enumerate}
 
 \subsection{Alternativas Computacionales}
@@ -245,7 +246,7 @@ PLOS Computational Biology, 19(9):e1011510. \url{https://doi.org/10.1371/journal
 
 \bibitem{scholz2007}
 Scholz, M. (2007).
-\textit{Analysing periodic phenomena by circular pca}.
+\textit{Analysing Periodic Phenomena by Circular PCA}.
 En \textit{Bioinformatics Research and Development (BIRD 2007)} (pp. 38-47). Springer.
 
 \bibitem{CYCLOPS}
@@ -273,6 +274,16 @@ Science, 379(6631):478-483. \url{https://doi.org/10.1126/science.add0846}
 Rueda, C., Larriba, Y., y Peddada, S. (2019).
 \textit{Frequency Modulated Möbius Model Accurately Predicts Rhythmic Signals in Biological and Physical Sciences}.
 Scientific Reports, 9:18701. \url{https://doi.org/10.1038/s41598-019-54569-1}
+
+\bibitem{cosinor}
+Cornelissen, G. (2014). 
+\textit{Cosinor-based rhythmometry}. 
+Theoretical Biology \& Medical Modelling, 11:16. \url{https://doi.org/10.1186/1742-4682-11-16}
+
+\bibitem{larribaORI}
+Larriba, Y., Rueda, C., Fernández, M. A., y Peddada, S. (2020). 
+\textit{Order restricted inference in chronobiology}. 
+Statistics in Medicine, 39(3):265--278. \url{https://doi.org/10.1002/sim.8397}
 
 \bibitem{gtex2020}
 GTEx Consortium (2020). 
