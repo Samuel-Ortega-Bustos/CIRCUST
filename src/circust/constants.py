@@ -32,7 +32,7 @@ SEED_GENES_RUBEN = []  # Completa según tus necesidades
 
 # Por defecto, CIRCUST usa la lista de Larriba et al. 2023.
 # Puedes cambiar esta variable para usar otra lista.
-SEED_GENES_DEFAULT = SEED_GENES_ZHANG
+SEED_GENES_DEFAULT = SEED_GENES_LARRIBA
 
 
 # =============================================================================
