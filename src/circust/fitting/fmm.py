@@ -49,13 +49,10 @@ Returns
 FitResult
     ``params`` keys: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
 """
-
-from __future__ import annotations
-
 import numpy as np
 from scipy.optimize import minimize
 
-from .base import FitResult, RhythmModel
+from src.circust.fitting.rhythm_model import FitResult, RhythmModel
 
 
 # ---------------------------------------------------------------------------

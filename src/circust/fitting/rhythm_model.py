@@ -162,9 +162,9 @@ class RhythmModel(ABC):
         return float(1.0 - ss_res / ss_tot)
 
     @staticmethod
-    def _standardise_residuals(residuals: np.ndarray) -> np.ndarray:
+    def _standardise_residuals(residuals: np.ndarray,ddof:int) -> np.ndarray:
         """(res − mean) / std, returns zeros if std == 0."""
-        std = residuals.std()
+        std = residuals.std(ddof=ddof)
         if std == 0:
             return np.zeros_like(residuals)
         return (residuals - residuals.mean()) / std

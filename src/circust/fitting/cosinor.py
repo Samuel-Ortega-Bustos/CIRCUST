@@ -36,12 +36,9 @@ Python equivalent::
     CosinorModel().fit(data, time_points)
     → FitResult(fitted, params={M, A, phi}, r2, residuals, …)
 """
-
-from __future__ import annotations
-
 import numpy as np
 
-from .rhythm_model import FitResult, RhythmModel
+from src.circust.fitting.rhythm_model import FitResult, RhythmModel
 
 
 class CosinorModel(RhythmModel):
@@ -65,10 +62,6 @@ class CosinorModel(RhythmModel):
     >>> print(result.summary())
     """
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def fit(
         self,
         data:        np.ndarray,
@@ -82,7 +75,7 @@ class CosinorModel(RhythmModel):
         data : np.ndarray, shape (n_samples,)
             Observed expression values (normalised to [-1, 1]).
         time_points : np.ndarray, shape (n_samples,)
-            Circular time axis in [0, 2π), typically ``CPCAResult.circular_scale``.
+            Circular time axis in [0, 2π).
 
         Returns
         -------
@@ -101,12 +94,12 @@ class CosinorModel(RhythmModel):
         # least-squares solve  (equivalent to R's lm(data ~ xx + zz))
         coeffs, *_ = np.linalg.lstsq(X, data, rcond=None)
         M_est =  coeffs[0]   # intercept  (mesor)
-        b     =  coeffs[1]   # cos coefficient
-        g     =  coeffs[2]   # sin coefficient
+        bcos     =  coeffs[1]   # cos coefficient
+        bsin     =  coeffs[2]   # sin coefficient
 
         # ── Parameter recovery ─────────────────────────────────────────
-        A_est   = np.sqrt(b**2 + g**2)                    # amplitude
-        phi_est = np.arctan2(-g, b) % (2 * np.pi)         # acrophase
+        A_est   = np.sqrt(bcos**2 + bsin**2)                    # amplitude
+        phi_est = np.arctan2(-bsin, bcos) % (2 * np.pi)         # acrophase
 
         # ── Fitted values ───────────────────────────────────────────────
         # R: Mest + Aest*cos(time + phiEst)
@@ -114,7 +107,7 @@ class CosinorModel(RhythmModel):
 
         # ── Residuals & R² ──────────────────────────────────────────────
         residuals     = data - fitted
-        residuals_std = self._standardise_residuals(residuals)
+        residuals_std = self._standardise_residuals(residuals,3)
         r2            = self._r2(data, fitted)
         sse           = float(np.sum(residuals**2))
 
