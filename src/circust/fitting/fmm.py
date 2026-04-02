@@ -53,12 +53,28 @@ FitResult
 import numpy as np
 from scipy.optimize import minimize
 
-from src.circust.fitting.rhythm_model import FitResult, RhythmModel
+from circust.fitting.rhythm_model import FitResult, RhythmModel
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers  (mirror R's hidden functions)
 # ---------------------------------------------------------------------------
+
+def fmm_peak_time(alpha: float, beta: float, omega: float) -> float:
+    """
+    Compute the time of peak of an FMM wave (R's ``compUU``).
+
+    Formula:  t_U = α + 2·atan2((1/ω)·sin(−β/2), cos(−β/2))  mod 2π
+
+    R equivalent: ``compUU(al, be, om)`` (line 79 of functionGTEX_cores.R).
+    """
+    return float(
+        (alpha + 2.0 * np.arctan2(
+            (1.0 / omega) * np.sin(-beta / 2.0),
+            np.cos(-beta / 2.0),
+        )) % (2.0 * np.pi)
+    )
+
 
 def _mobius(t: np.ndarray, alpha: float, omega: float) -> np.ndarray:
     """Möbius transformation of the time axis.
@@ -213,32 +229,35 @@ def _best_step1(
     return None
 
 
-def _step2_objective(
-    params: np.ndarray,
+def _make_step2_objective(
     data: np.ndarray,
     t: np.ndarray,
     omega_max: float,
-) -> float:
+) -> callable:
     """
-    Nelder-Mead objective: mean RSS with constraint penalties.
+    Build a Nelder-Mead objective with precomputed data bounds.
 
-    R equivalent: ``step2FMM()``.
-    Returns ∞ when any stability constraint is violated.
+    Avoids recomputing min/max/slack on every evaluation (called thousands
+    of times per fit).  R equivalent: ``step2FMM()``.
     """
-    M, A, alpha, beta, omega = params
     data_min = data.min()
     data_max = data.max()
     slack    = 0.1 * (data_max - data_min)
+    upper    = data_max + slack
+    lower    = data_min - slack
+    n        = len(t)
 
-    # Stability constraints (same as R)
-    if (M + A) > (data_max + slack):  return np.inf
-    if (M - A) < (data_min - slack):  return np.inf
-    if A <= 0:                         return np.inf
-    if omega <= 0:                     return np.inf
-    if omega > omega_max:              return np.inf
+    def objective(params: np.ndarray) -> float:
+        M, A, alpha, beta, omega = params
+        if (M + A) > upper:    return np.inf
+        if (M - A) < lower:    return np.inf
+        if A <= 0:             return np.inf
+        if omega <= 0:         return np.inf
+        if omega > omega_max:  return np.inf
+        fitted = _fmm_predict(t, M, A, alpha, beta, omega)
+        return float(np.sum((fitted - data)**2) / n)
 
-    fitted = _fmm_predict(t, M, A, alpha, beta, omega)
-    return float(np.sum((fitted - data)**2) / len(t))
+    return objective
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +342,8 @@ class FMMModel(RhythmModel):
             )
         )
 
-        best_par = None
+        best_par  = None
+        objective = _make_step2_objective(data, time_points, self.omega_max)
 
         for rep in range(self.num_reps):
 
@@ -342,10 +362,9 @@ class FMMModel(RhythmModel):
 
             # ── Step 2: Nelder-Mead refinement ───────────────────────────
             result = minimize(
-                _step2_objective,
-                x0     = best_par[:5],
-                args   = (data, time_points, self.omega_max),
-                method = "Nelder-Mead",
+                objective,
+                x0      = best_par[:5],
+                method  = "Nelder-Mead",
                 options = {"xatol": 1e-6, "fatol": 1e-6, "maxiter": 5000},
             )
             par_final = result.x.copy()
@@ -372,7 +391,7 @@ class FMMModel(RhythmModel):
         # ── Final fitted values & statistics ────────────────────────────
         fitted        = _fmm_predict(time_points, M, A, alpha, beta, omega)
         residuals     = data - fitted
-        residuals_std = self._standardise_residuals(residuals)
+        residuals_std = self._standardise_residuals(residuals, ddof=5)
         r2            = self._r2(data, fitted)
         sse           = float(np.sum(residuals**2))
 

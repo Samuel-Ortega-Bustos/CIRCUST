@@ -246,20 +246,46 @@ class PreprocessingResult:
             f"  Dropped (sparse)     : {len(self.dropped_sparse)}",
             f"  Dropped (duplicates) : {len(self.dropped_duplicates)}",
         ]
+        if self.dropped_sparse:
+            shown = self.dropped_sparse[:5]
+            tail  = f" … (+{len(self.dropped_sparse)-5} more)" if len(self.dropped_sparse) > 5 else ""
+            lines.append(f"    sparse genes       : {shown}{tail}")
+        if self.dropped_duplicates:
+            unique_dupes = sorted(set(self.dropped_duplicates))[:5]
+            tail = f" … (+{len(set(self.dropped_duplicates))-5} more)" if len(set(self.dropped_duplicates)) > 5 else ""
+            lines.append(f"    duplicate genes    : {unique_dupes}{tail}")
         return "\n".join(lines)
     
 class Preprocessor:
     """
     Clean and normalise a raw gene-expression matrix.
 
+    Replicates R's ``giveMatIniNP_v3_cores`` preprocessing steps:
+
+    1. Drop genes with no name (NA rownames in R)
+    2. Drop sparse genes (> ``sparse_threshold`` of samples are zero OR NaN)
+    3. Resolve duplicate gene names — keep the row with the highest MAD
+    4. Normalise each gene to [−1, 1]
+
     Parameters
     ----------
-    zero_threshold : float
-        Fraction of samples allowed to be zero before a gene is dropped.
-        The comparison is strict (>), so a gene at exactly 30% is kept.
+    sparse_threshold : float
+        Fraction of samples that may be zero or NaN before a gene is
+        dropped.  The comparison is strict (>), so a gene at exactly the
+        threshold fraction is kept.
+        R default: 0.30 (line 3920-3921 of ``giveMatIniNP_v3_cores``).
 
-    nan_threshold : float
-        Same as zero_threshold but for NaN values.
+        Note: R applies the **same** threshold to both zeros and NaNs.
+        If you need to treat them differently, use ``zero_threshold`` and
+        ``nan_threshold`` separately (non-R extension).
+
+    zero_threshold : float or None
+        Override for the zeros-only threshold.  If None (default), uses
+        ``sparse_threshold`` for zeros, matching R behaviour exactly.
+
+    nan_threshold : float or None
+        Override for the NaN-only threshold.  If None (default), uses
+        ``sparse_threshold`` for NaNs, matching R behaviour exactly.
 
     verbose : bool
         If True, print a progress message after each step.
@@ -269,7 +295,6 @@ class Preprocessor:
     >>> import pandas as pd
     >>> import numpy as np
     >>>
-    >>> # Create a small toy matrix (genes × samples)
     >>> rng = np.random.default_rng(0)
     >>> mat = pd.DataFrame(
     ...     rng.poisson(10, size=(200, 60)).astype(float),
@@ -285,22 +310,22 @@ class Preprocessor:
     """
     def __init__(
             self,
-            zero_threshold: float = ZERO_COUNT_THRESHOLD,
-            nan_threshold: float = ZERO_COUNT_THRESHOLD,
-            verbose: bool = True
-    )-> None:
-        
-        if not 0.0 < zero_threshold < 1.0:
+            sparse_threshold: float = ZERO_COUNT_THRESHOLD,
+            zero_threshold:   Optional[float] = None,
+            nan_threshold:    Optional[float] = None,
+            verbose: bool = True,
+    ) -> None:
+
+        if not 0.0 < sparse_threshold < 1.0:
             raise ValueError(
-                f"zero_threshold must be between 0 and 1, got {zero_threshold}"
+                f"sparse_threshold must be between 0 and 1, got {sparse_threshold}"
             )
-        if not 0.0 < nan_threshold < 1.0:
-            raise ValueError(
-                f"nan_threshold must be between 0 and 1, got {nan_threshold}"
-            )
-        
-        self.zero_threshold = zero_threshold
-        self.nan_threshold = nan_threshold
+
+        self.sparse_threshold = sparse_threshold
+        # If caller provides specific overrides use them; otherwise fall back
+        # to sparse_threshold — matching R's single-threshold behaviour.
+        self.zero_threshold = zero_threshold if zero_threshold is not None else sparse_threshold
+        self.nan_threshold  = nan_threshold  if nan_threshold  is not None else sparse_threshold
         self.verbose = verbose
 
     def run(self,matrix:pd.DataFrame) -> PreprocessingResult:
@@ -333,7 +358,7 @@ class Preprocessor:
         # step 3 — resolve duplicate gene names
         mat, dropped_duplicates = self._resolve_duplicates(mat)
 
-        # step 4 — normalise each gene to [NORM_MIN, NORM_MAX]
+        # step 4 — normalise each gene to [−1, 1]
         expr_norm = self._normalise(mat)
 
         result = PreprocessingResult(
@@ -349,21 +374,31 @@ class Preprocessor:
         self._log(result.summary())
         return result
     
-    def _drop_unnamed(self,mat:pd.DataFrame) -> pd.DataFrame:
+    def _drop_unnamed(self, mat: pd.DataFrame) -> pd.DataFrame:
         """
-        Remove rows whose gene symbol is NaN or an empty string.
-        """
+        Remove rows whose gene symbol is missing or effectively empty.
 
-        # a gene name is invalid if it is:
-        #   - a real NaN value in the index
-        #   - the string "nan" (happens when a NaN is cast to str)
-        #   - blank / whitespace only
-        is_invalid     = (mat.index.isna()) | (mat.index.values == "")
-        
+        Matches R's ``which(is.na(rownames(...)))`` (line 3914) and extends
+        it to catch edge cases that arise when loading from CSV/Excel:
+
+        - Real NaN in the index  (R: NA rowname)
+        - Empty string ``""``
+        - Whitespace-only string ``"   "``
+        - The literal string ``"nan"`` (happens when NaN is cast to str)
+        """
+        index_str = mat.index.astype(str)
+        is_invalid = (
+            mat.index.isna()                          # real NaN
+            | (index_str.str.strip() == "")           # blank / whitespace-only
+            | (index_str.str.lower() == "nan")        # stringified NaN
+        )
+
         n_bad = int(is_invalid.sum())
         if n_bad > 0:
             self._log(f"  Step 1 — dropped {n_bad} gene(s) with no name")
-        
+        else:
+            self._log("  Step 1 — no unnamed genes found")
+
         return mat.loc[~is_invalid]
 
     def _drop_sparse(self, mat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
@@ -482,4 +517,4 @@ class Preprocessor:
     def _log(self, message: str) -> None:
         """Print only when verbose=True."""
         if self.verbose:
-            print(message)
+          print(message)

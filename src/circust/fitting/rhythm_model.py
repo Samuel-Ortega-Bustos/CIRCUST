@@ -1,14 +1,12 @@
 """
-========================
-Shared interface for all rhythm-fitting models in the CIRCUST pipeline.
+Interfaz compartida para todos los modelos de ajuste ritmico del pipeline CIRCUST.
 
-Design note
------------
-``FitResult`` is intentionally a plain dataclass rather than a class
-hierarchy.  The models differ in their *parameters* (Cosinor has 3,
-FMM has 5) so those are stored as a plain dict rather than typed fields.
-Everything else — fitted values, residuals, R² — is the same across
-all models.
+Nota de diseno
+--------------
+``FitResult`` es intencionadamente un dataclass plano en lugar de una jerarquia
+de clases.  Los modelos difieren en sus parametros (Cosinor tiene 3, FMM tiene 5),
+por lo que se almacenan como un dict generico.  Todo lo demas valores ajustados,
+residuos, R-cuadrado es comun a todos los modelos.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -17,50 +15,50 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Result container
+# Contenedor de resultados
 # ---------------------------------------------------------------------------
 
 @dataclass
 class FitResult:
     """
-    Output of any rhythm-fitting model.
+    Resultado de cualquier modelo de ajuste ritmico.
 
-    Attributes
-    ----------
-    fitted : np.ndarray, shape (n_samples,)
-        Values predicted by the model at each time point.
+    Atributos
+    ---------
+    fitted : np.ndarray, dim (n_muestras,)
+        Valores predichos por el modelo en cada punto temporal.
 
     params : dict
-        Model-specific parameter estimates.
+        Parametros estimados del modelo.
 
-        Cosinor keys : ``M``, ``A``, ``phi``
-            - M   : mesor (mean level)
-            - A   : amplitude
-            - phi : acrophase in [0, 2π)  — time of peak
+        Claves Cosinor : ``M``, ``A``, ``phi``
+            - M   : mesor (nivel medio)
+            - A   : amplitud
+            - phi : acrofase en [0, 2*pi) — momento del pico
 
-        FMM keys : ``M``, ``A``, ``alpha``, ``beta``, ``omega``
+        Claves FMM : ``M``, ``A``, ``alpha``, ``beta``, ``omega``
             - M     : mesor
-            - A     : amplitude
-            - alpha : location parameter (peak region centre) in [0, 2π)
-            - beta  : shape parameter in [0, 2π)
-            - omega : skewness parameter in (0, 1]
+            - A     : amplitud
+            - alpha : parametro de localizacion (centro de la region del pico) en [0, 2*pi)
+            - beta  : parametro de forma en [0, 2*pi)
+            - omega : parametro de asimetria en (0, 1]
 
     r2 : float
-        Coefficient of determination  R² = 1 - SS_res / SS_tot.
-        Ranges from -∞ to 1; a flat model (predicting the mean) gives 0.
+        Coeficiente de determinacion  R-cuadrado = 1 - SS_res / SS_tot.
+        Rango de -inf a 1; un modelo plano (prediciendo la media) da 0.
 
-    residuals : np.ndarray, shape (n_samples,)
-        Raw residuals: data − fitted.
+    residuals : np.ndarray, forma (n_muestras,)
+        Residuos brutos: datos - ajustado.
 
-    residuals_std : np.ndarray, shape (n_samples,)
-        Standardised residuals: (residuals − mean) / std.
-        Used by the outlier-refinement stage.
+    residuals_std : np.ndarray, forma (n_muestras,)
+        Residuos estandarizados: (residuos - media) / desv_std.
+        Utilizados en la etapa de refinamiento de outliers.
 
     sse : float
-        Sum of squared errors.
+        Suma de errores al cuadrado.
 
     model_name : str
-        ``"cosinor"`` or ``"fmm"``.
+        ``"cosinor"`` o ``"fmm"``.
     """
 
     fitted:        np.ndarray
@@ -72,58 +70,50 @@ class FitResult:
     model_name:    str
 
     # ------------------------------------------------------------------
-    # Convenience helpers
+    # Metodos auxiliares
     # ------------------------------------------------------------------
 
     @property
     def peak_time(self) -> float:
         """
-        Phase of the peak in [0, 2π).
+        Fase del pico en [0, 2*pi).
 
-        For Cosinor this is ``params["phi"]``.
-        For FMM this is computed from alpha, beta, omega via the
-        Möbius peak formula (see ``FMMModel.peak_time``).
+        Para Cosinor es ``params["phi"]``.
+        Para FMM usa la formula cerrada ``compUU`` de R:
+            t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
         """
         if self.model_name == "cosinor":
             return float(self.params["phi"])
         elif self.model_name == "fmm":
-            alpha = self.params["alpha"]
-            beta  = self.params["beta"]
-            omega = self.params["omega"]
-            # peak of cos(beta + 2*atan(omega*tan((t-alpha)/2))) is at
-            # t* = alpha + 2*atan(cos(beta/2) / (omega*sin(beta/2)+eps))
-            # Simplified: t* where the argument of cos is 0 → beta + Mobius = 0
-            # Use numerical search on a fine grid
-            t_grid = np.linspace(0, 2 * np.pi, 10_000, endpoint=False)
-            mobius = beta + 2 * np.arctan(
-                omega * np.tan((t_grid - alpha) / 2)
+            from circust.fitting.fmm import fmm_peak_time
+            return fmm_peak_time(
+                self.params["alpha"], self.params["beta"], self.params["omega"]
             )
-            return float(t_grid[np.argmin(np.abs(mobius % (2 * np.pi)))])
         else:
-            raise NotImplementedError(f"peak_time not implemented for {self.model_name}")
+            raise NotImplementedError(f"peak_time no implementado para {self.model_name}")
 
     def summary(self) -> str:
         lines = [
-            f"=== {self.model_name.upper()} Fit ===",
-            f"  R²       : {self.r2:.4f}",
-            f"  SSE      : {self.sse:.6f}",
-            f"  params   : { {k: round(float(v), 5) for k, v in self.params.items()} }",
+            f"=== Ajuste {self.model_name.upper()} ===",
+            f"  R-cuadrado : {self.r2:.4f}",
+            f"  SSE        : {self.sse:.6f}",
+            f"  parametros : { {k: round(float(v), 5) for k, v in self.params.items()} }",
         ]
         return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Abstract base model
+# Modelo base abstracto
 # ---------------------------------------------------------------------------
 
 class RhythmModel(ABC):
     """
-    Common interface for all circadian rhythm fitting models.
+    Interfaz comun para todos los modelos de ajuste de ritmos circadianos.
 
-    Subclasses must implement :meth:`fit`.
+    Las subclases deben implementar :meth:`fit`.
 
-    Parameters passed to the constructor are hyperparameters that remain
-    constant across calls to ``fit()`` (e.g. grid sizes for FMM).
+    Los parametros pasados al constructor son hiperparametros que permanecen
+    constantes entre llamadas a ``fit()`` (p.ej. tamanos de rejilla para FMM).
     """
 
     @abstractmethod
@@ -133,28 +123,28 @@ class RhythmModel(ABC):
         time_points: np.ndarray,
     ) -> FitResult:
         """
-        Fit the model to ``data`` observed at ``time_points``.
+        Ajusta el modelo a ``data`` observados en ``time_points``.
 
-        Parameters
+        Parametros
         ----------
-        data : np.ndarray, shape (n_samples,)
-            Normalised expression values (typically in [-1, 1]).
-        time_points : np.ndarray, shape (n_samples,)
-            Circular time axis in [0, 2π), as produced by CPCA
+        data : np.ndarray, forma (n_muestras,)
+            Valores de expresion normalizados (tipicamente en [-1, 1]).
+        time_points : np.ndarray, forma (n_muestras,)
+            Eje temporal circular en [0, 2*pi), producido por CPCA
             (``CPCAResult.circular_scale``).
 
-        Returns
-        -------
+        Devuelve
+        --------
         FitResult
         """
 
     # ------------------------------------------------------------------
-    # Shared utility used by all models
+    # Utilidades compartidas por todos los modelos
     # ------------------------------------------------------------------
 
     @staticmethod
     def _r2(data: np.ndarray, fitted: np.ndarray) -> float:
-        """R² = 1 − SS_res / SS_tot."""
+        """R-cuadrado = 1 - SS_res / SS_tot."""
         ss_res = np.sum((data - fitted) ** 2)
         ss_tot = np.sum((data - data.mean()) ** 2)
         if ss_tot == 0:
@@ -162,8 +152,12 @@ class RhythmModel(ABC):
         return float(1.0 - ss_res / ss_tot)
 
     @staticmethod
-    def _standardise_residuals(residuals: np.ndarray,ddof:int) -> np.ndarray:
-        """(res − mean) / std, returns zeros if std == 0."""
+    def _standardise_residuals(residuals: np.ndarray, ddof: int = 1) -> np.ndarray:
+        """(res - media) / desv_std  con ``ddof`` grados de libertad.
+
+        ddof=1 corresponde a ``sd()`` de R — el valor por defecto en CIRCUST.
+        Devuelve ceros si desv_std == 0 (residuos constantes).
+        """
         std = residuals.std(ddof=ddof)
         if std == 0:
             return np.zeros_like(residuals)

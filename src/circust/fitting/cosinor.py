@@ -1,58 +1,58 @@
 """
 circust/fitting/cosinor.py
 ===========================
-Cosinor rhythm model — a least-squares sinusoidal fit.
+Modelo ritmico Cosinor — ajuste sinusoidal por minimos cuadrados.
 
-Mathematical model
-------------------
-    y(t) = M + A · cos(t + φ)
+Modelo matematico
+-----------------
+    y(t) = M + A * cos(t + phi)
 
-where
+donde
 
-    M   mesor        — mean level of the signal
-    A   amplitude    — half the peak-to-trough range
-    φ   acrophase    — time of the peak (phase lag, in [0, 2π))
+    M   mesor        — nivel medio de la senal
+    A   amplitud     — mitad del rango pico-a-valle
+    phi acrofase     — momento del pico (desfase, en [0, 2*pi))
 
-The model is fit via OLS by rewriting it as a linear regression:
+El modelo se ajusta por OLS reescribiendolo como regresion lineal:
 
-    y = M + b·cos(t) + g·sin(t)
-      = M + A·cos(t + φ)
+    y = M + b*cos(t) + g*sin(t)
+      = M + A*cos(t + phi)
 
-with  b = A·cos(φ),  g = −A·sin(φ),  so that
+con  b = A*cos(phi),  g = -A*sin(phi),  de modo que
 
-    A   = √(b² + g²)
-    φ   = atan2(−g, b) mod 2π
+    A   = sqrt(b**2 + g**2)
+    phi = atan2(-g, b) mod 2*pi
 
-This is an exact Python port of R's ``funcionCosinor()`` from
-``functionGTEX_cores.R`` (lines 83-96).
+Port exacto de ``funcionCosinor()`` de R en
+``functionGTEX_cores.R`` (lineas 83-96).
 
-R signature::
+Firma en R::
 
     funcionCosinor(datos, time, periodo)
-    → list(fitted, M, A, phase_vector, phi)
+    -> list(fitted, M, A, phase_vector, phi)
 
-Python equivalent::
+Equivalente en Python::
 
     CosinorModel().fit(data, time_points)
-    → FitResult(fitted, params={M, A, phi}, r2, residuals, …)
+    -> FitResult(fitted, params={M, A, phi}, r2, residuals, ...)
 """
 import numpy as np
 
-from src.circust.fitting.rhythm_model import FitResult, RhythmModel
+from circust.fitting.rhythm_model import FitResult, RhythmModel
 
 
 class CosinorModel(RhythmModel):
     """
-    Single-component Cosinor model.
+    Modelo Cosinor de un solo componente.
 
-    Fits  y(t) = M + A·cos(t + φ)  via ordinary least squares.
+    Ajusta  y(t) = M + A*cos(t + phi)  por minimos cuadrados ordinarios.
 
-    This is the fastest of the rhythm models — O(n) — and is used both
-    as a standalone rhythmicity test and as the initial-parameter
-    estimator inside FMM.
+    Es el mas rapido de los modelos ritmicos — O(n) — y se usa tanto
+    como test de ritmicidad independiente como estimador de parametros
+    iniciales dentro de FMM.
 
-    Examples
-    --------
+    Ejemplo
+    -------
     >>> import numpy as np
     >>> from circust.fitting.cosinor import CosinorModel
     >>>
@@ -68,46 +68,46 @@ class CosinorModel(RhythmModel):
         time_points: np.ndarray,
     ) -> FitResult:
         """
-        Fit the Cosinor model to ``data``.
+        Ajusta el modelo Cosinor a ``data``.
 
-        Parameters
+        Parametros
         ----------
-        data : np.ndarray, shape (n_samples,)
-            Observed expression values (normalised to [-1, 1]).
-        time_points : np.ndarray, shape (n_samples,)
-            Circular time axis in [0, 2π).
+        data : np.ndarray, forma (n_muestras,)
+            Valores de expresion observados (normalizados a [-1, 1]).
+        time_points : np.ndarray, forma (n_muestras,)
+            Eje temporal circular en [0, 2*pi).
 
-        Returns
-        -------
+        Devuelve
+        --------
         FitResult
-            ``params`` keys: ``M``, ``A``, ``phi``
-            ``fitted`` reproduces R's ``Mest + Aest*cos(time + phiEst)``
+            Claves de ``params``: ``M``, ``A``, ``phi``
+            ``fitted`` reproduce ``Mest + Aest*cos(time + phiEst)`` de R.
         """
         data        = np.asarray(data,        dtype=float)
         time_points = np.asarray(time_points, dtype=float)
 
-        # ── OLS design matrix: [1, cos(t), sin(t)] ─────────────────────
+        # ── Matriz de diseno OLS: [1, cos(t), sin(t)] ─────────────────
         xx = np.cos(time_points)
         zz = np.sin(time_points)
         X  = np.column_stack([np.ones(len(data)), xx, zz])
 
-        # least-squares solve  (equivalent to R's lm(data ~ xx + zz))
+        # Resolucion por minimos cuadrados (equivalente a lm(data ~ xx + zz) de R)
         coeffs, *_ = np.linalg.lstsq(X, data, rcond=None)
-        M_est =  coeffs[0]   # intercept  (mesor)
-        bcos     =  coeffs[1]   # cos coefficient
-        bsin     =  coeffs[2]   # sin coefficient
+        M_est  = coeffs[0]   # intercepto (mesor)
+        bcos   = coeffs[1]   # coeficiente coseno
+        bsin   = coeffs[2]   # coeficiente seno
 
-        # ── Parameter recovery ─────────────────────────────────────────
-        A_est   = np.sqrt(bcos**2 + bsin**2)                    # amplitude
-        phi_est = np.arctan2(-bsin, bcos) % (2 * np.pi)         # acrophase
+        # ── Recuperacion de parametros ─────────────────────────────────
+        A_est   = np.sqrt(bcos**2 + bsin**2)                    # amplitud
+        phi_est = np.arctan2(-bsin, bcos) % (2 * np.pi)         # acrofase
 
-        # ── Fitted values ───────────────────────────────────────────────
+        # ── Valores ajustados ──────────────────────────────────────────
         # R: Mest + Aest*cos(time + phiEst)
         fitted = M_est + A_est * np.cos(time_points + phi_est)
 
-        # ── Residuals & R² ──────────────────────────────────────────────
+        # ── Residuos y R-cuadrado ──────────────────────────────────────
         residuals     = data - fitted
-        residuals_std = self._standardise_residuals(residuals,3)
+        residuals_std = self._standardise_residuals(residuals, 3)
         r2            = self._r2(data, fitted)
         sse           = float(np.sum(residuals**2))
 
