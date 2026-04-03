@@ -1,34 +1,37 @@
 """
 circust/visualization/order_plots.py
 =====================================
-Visualisations for the preliminary ordering stage (Stage 2).
+Visualizaciones para la etapa de ordenación preliminar (Etapa 2).
 
-Four plot types:
+Cuatro tipos de gráficos:
 
   plot_circular_peaks(result)
-      Polar plot of FMM peak times for each core gene on a 24-hour
-      clock face.  The most iconic CIRCUST visualisation — shows the
-      temporal programme of the circadian clock.
-      R equivalent: ``peaksFMMCoresAfter_*.png``, ``12PeaksPre_*.png``.
+      Gráfico polar de los tiempos de pico FMM para cada gen reloj
+      principal en un reloj de 24 horas. La visualización más
+      emblemática de CIRCUST — muestra el programa temporal del
+      reloj circadiano.
+      Equivalente en R: ``peaksFMMCoresAfter_*.png``, ``12PeaksPre_*.png``.
 
   plot_ordered_profiles(result, expr)
-      Grid of core-gene expression profiles in the final biological
-      order, with the FMM model curve overlaid.  Shows each gene's
-      waveform after ARNTL anchoring and direction correction.
-      R equivalent: ``12CorePre_*.png``.
+      Cuadrícula de perfiles de expresión de genes principales en el
+      orden biológico final, con la curva del modelo FMM superpuesta.
+      Muestra la forma de onda de cada gen tras el anclaje de ARNTL
+      y la corrección de dirección.
+      Equivalente en R: ``12CorePre_*.png``.
 
   plot_r2_comparison(result)
-      Horizontal bar chart of FMM R² for each core gene, colour-coded
-      by day/night classification.  Quickly shows which genes have
-      strong vs weak rhythmic fits.
+      Gráfico de barras horizontales del R² FMM para cada gen
+      principal, codificado por color según la clasificación
+      día/noche. Muestra rápidamente qué genes tienen ajustes
+      rítmicos fuertes vs débiles.
 
   plot_day_night_diagram(result)
-      Circular sector diagram partitioning the 24-hour cycle into
-      day [0, π) and night [π, 2π), with gene names placed at their
-      peak positions.  Provides an intuitive summary of which genes
-      peak in each biological phase.
+      Diagrama circular de sectores que divide el ciclo de 24 horas
+      en día [0, π) y noche [π, 2π), con los nombres de los genes
+      situados en sus posiciones de pico. Proporciona un resumen
+      intuitivo de qué genes alcanzan su pico en cada fase biológica.
 
-All functions return a matplotlib Figure.  None call plt.show().
+Todas las funciones devuelven una Figure de matplotlib. Ninguna llama a plt.show().
 """
 import math
 from typing import Optional

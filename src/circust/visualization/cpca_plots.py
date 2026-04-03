@@ -1,25 +1,25 @@
 """
 circust/visualization/cpca_plots.py
 ============================
-Visualisations for the CPCA stage of the CIRCUST pipeline.
+Visualizaciones para la etapa CPCA del pipeline CIRCUST.
 
-Two plots, mirroring R's obtainCPCA12/13 (printing=TRUE) output:
+Dos gráficos, equivalentes a la salida de obtainCPCA12/13 (printing=TRUE) en R:
 
   plot_pc_scatter(result)
-      PC1 vs PC2 scatter with outlier highlights and threshold circles.
-      Equivalent to R's first x11() window in obtainCPCA12/13.
+      Dispersión PC1 vs PC2 con resaltado de outliers y círculos de umbral.
+      Equivalente a la primera ventana x11() en obtainCPCA12/13 de R.
 
   plot_gene_panels(result)
-      Grid of core-gene expression traces ordered by circular phase,
-      plus PC1/PC2/PC3 eigengene panels at the end.
-      Equivalent to R's second x11() window in obtainCPCA12/13.
+      Cuadrícula de trazas de expresión de genes reloj ordenadas por fase circular,
+      más paneles de eigengenes PC1/PC2/PC3 al final.
+      Equivalente a la segunda ventana x11() en obtainCPCA12/13 de R.
 
-Both functions return a matplotlib Figure so callers can save, display,
-or embed them as needed.  Neither function calls plt.show() — that is
-the caller's responsibility.
+Ambas funciones devuelven una Figure de matplotlib para que el llamador pueda
+guardarlas, mostrarlas o integrarlas según necesite. Ninguna función llama a
+plt.show() — eso es responsabilidad del llamador.
 
-Usage
------
+Uso
+---
     from circust.cpca import CPCA
     from circust.plots.cpca_plots import plot_pc_scatter, plot_gene_panels
 

@@ -1,50 +1,54 @@
 """
 circust/preliminary_order.py
 ============================
-Stage 2: Preliminary Circular Ordering.
+Etapa 2: Ordenamiento Circular Preliminar.
 
-Implements R's ``basicPreOder_cores`` (Step 2.1) and ``basicOder_cores``
-(Steps 2.2 & 2.3) from ``functionGTEX_cores.R``.
+Implementa ``basicPreOder_cores`` (Paso 2.1) y ``basicOder_cores``
+(Pasos 2.2 y 2.3) de R en ``functionGTEX_cores.R``.
 
-Goal
-----
-The CPCA-derived circular ordering is rotation-invariant and has an
-arbitrary direction (clockwise or counter-clockwise).  This stage fixes
-both issues using biological priors about the mammalian circadian clock:
+Objetivo
+--------
+El ordenamiento circular derivado de CPCA es invariante a rotacion y tiene
+una direccion arbitraria (sentido horario o antihorario). Esta etapa corrige
+ambos problemas usando conocimiento biologico previo sobre el reloj
+circadiano mamifero:
 
-  * **ARNTL** peaks near Zeitgeber time 0 (subjective midnight/dawn).
-    After the rotation it sits at π on the circular scale.
+  * **ARNTL** tiene su pico cerca del tiempo Zeitgeber 0 (medianoche/amanecer
+    subjetivo). Tras la rotacion se situa en π en la escala circular.
 
-  * **DBP** peaks in the active phase, which should fall in [0, π) when
-    ARNTL is placed at π.  If DBP ends up in [π, 2π) the direction of
-    the ordering is wrong and is reversed.
+  * **DBP** tiene su pico en la fase activa, que deberia caer en [0, π)
+    cuando ARNTL esta en π. Si DBP termina en [π, 2π) la direccion del
+    ordenamiento es incorrecta y se invierte.
 
-Step 2.1 — ``basicPreOder_cores``
+Paso 2.1 — ``basicPreOder_cores``
 -----------------------------------
-1. Rotate the circular scale so that ARNTL's FMM peak time sits at π.
-2. Determine direction: if (DBP_peak − ARNTL_peak + π) mod 2π < π then
-   DBP is in the first half → forward direction; otherwise reverse.
-3. Re-parameterise each core gene's FMM fit in the new coordinate frame.
-4. Classify the remaining core genes as *day* (peak ∈ [0, π)) or
-   *night* (peak ∈ [π, 2π)).
+1. Rotar la escala circular para que el tiempo de pico FMM de ARNTL
+   quede en π.
+2. Determinar direccion: si (DBP_peak − ARNTL_peak + π) mod 2π < π
+   entonces DBP esta en la primera mitad → direccion directa; si no,
+   invertir.
+3. Reparametrizar el ajuste FMM de cada gen central en el nuevo marco
+   de coordenadas.
+4. Clasificar los genes centrales restantes como *dia* (pico ∈ [0, π))
+   o *noche* (pico ∈ [π, 2π)).
 
-Step 2.2 & 2.3 — ``basicOder_cores``
+Paso 2.2 y 2.3 — ``basicOder_cores``
 --------------------------------------
-Apply a refined biological consistency check.  If any of the following
-conditions hold (``aviso = True``):
-  - DBP is too close to 0 (1 − cos(DBP_peak) ≤ 0.1)
-  - DBP is too close to π (1 − cos(DBP_peak − π) ≤ 0.1)
-  - Fewer than half of the non-ARNTL/DBP genes peak in [0, π)
-AND the order DBP < CRY1 < ARNTL does NOT hold, then flip the direction.
+Aplica una verificacion de consistencia biologica refinada. Si alguna de
+las siguientes condiciones se cumple (``aviso = True``):
+  - DBP esta demasiado cerca de 0 (1 − cos(DBP_peak) ≤ 0.1)
+  - DBP esta demasiado cerca de π (1 − cos(DBP_peak − π) ≤ 0.1)
+  - Menos de la mitad de los genes sin ARNTL/DBP tienen pico en [0, π)
+Y el orden DBP < CRY1 < ARNTL NO se cumple, entonces invertir la direccion.
 
-R source lines
---------------
-* Step 2.1: ``basicPreOder_cores``  (lines 4192-4263)
-* Step 2.2: ``basicOder_cores``     (lines 4527-4594)
+Lineas fuente en R
+-------------------
+* Paso 2.1: ``basicPreOder_cores``  (lineas 4192-4263)
+* Paso 2.2: ``basicOder_cores``     (lineas 4527-4594)
 
-Pipeline position
------------------
-    OutlierRefiner  →  PreliminaryOrderEstimator  →  (Stage 3)
+Posicion en el pipeline
+-----------------------
+    OutlierRefiner  →  PreliminaryOrderEstimator  →  (Etapa 3)
 """
 import numpy as np
 import pandas as pd
@@ -57,81 +61,82 @@ from circust.fitting.rhythm_model import FitResult
 
 
 # ---------------------------------------------------------------------------
-# Result dataclass
+# Dataclass de resultado
 # ---------------------------------------------------------------------------
 
 @dataclass
 class PreliminaryOrderResult:
     """
-    Combined output of Stage 2.1 and Stage 2.2 & 2.3.
+    Salida combinada de la Etapa 2.1 y Etapas 2.2 y 2.3.
 
-    Attributes
-    ----------
-    sample_order : np.ndarray of int, shape (n_samples,)
-        Final sample indices into the cleaned expression matrix.
-        R equivalent: ``basicOrdRefG2[[1]]``  (= ``indSin``).
+    Atributos
+    ---------
+    sample_order : np.ndarray de int, forma (n_muestras,)
+        Indices finales de muestra en la matriz de expresion limpia.
+        Equivalente en R: ``basicOrdRefG2[[1]]``  (= ``indSin``).
 
-    circular_scale : np.ndarray of float, shape (n_samples,)
-        Circular time axis in [0, 2π) after direction correction.
-        R equivalent: ``basicOrdRefG2[[2]]``  (= ``escSincroRefG``).
+    circular_scale : np.ndarray de float, forma (n_muestras,)
+        Eje temporal circular en [0, 2π) tras correccion de direccion.
+        Equivalente en R: ``basicOrdRefG2[[2]]``  (= ``escSincroRefG``).
 
-    expr_ordered : pd.DataFrame, shape (n_genes, n_samples)
-        Full normalised expression matrix in the final circular order.
-        R equivalent: ``basicOrdRefG2[[3]]``  (= ``matNewNew``).
+    expr_ordered : pd.DataFrame, forma (n_genes, n_muestras)
+        Matriz de expresion normalizada completa en el orden circular final.
+        Equivalente en R: ``basicOrdRefG2[[3]]``  (= ``matNewNew``).
 
-    peak_times : np.ndarray of float, shape (n_core_genes,)
-        FMM peak time for each core gene in the final coordinate frame.
-        R equivalent: ``basicOrdRefG2[[4]]``  (= ``peaksPreNew``).
+    peak_times : np.ndarray de float, forma (n_genes_core,)
+        Tiempo de pico FMM para cada gen central en el marco de coordenadas final.
+        Equivalente en R: ``basicOrdRefG2[[4]]``  (= ``peaksPreNew``).
 
-    r2_fmm : np.ndarray of float, shape (n_core_genes,)
-        R² of the FMM fit for each core gene (from final-ordering fits).
-        R equivalent: ``basicOrdRefG2[[5]]``.
+    r2_fmm : np.ndarray de float, forma (n_genes_core,)
+        R² del ajuste FMM para cada gen central (de los ajustes con
+        ordenamiento final).
+        Equivalente en R: ``basicOrdRefG2[[5]]``.
 
-    fmm_params : np.ndarray of float, shape (n_core_genes, 5)
-        FMM parameters [M, A, α, β, ω] per core gene in the new frame.
-        R equivalent: ``basicOrdRefG2[[6]]``  (= ``pars``).
+    fmm_params : np.ndarray de float, forma (n_genes_core, 5)
+        Parametros FMM [M, A, α, β, ω] por gen central en el nuevo marco.
+        Equivalente en R: ``basicOrdRefG2[[6]]``  (= ``pars``).
 
     direction_flipped : bool
-        True if the direction was reversed by either Step 2.1 or 2.2.
-        R equivalent: ``basicOrdRefG2[[7]]``  (= ``cambiaOri``).
+        True si la direccion fue invertida por el Paso 2.1 o 2.2.
+        Equivalente en R: ``basicOrdRefG2[[7]]``  (= ``cambiaOri``).
 
-    within_group_indices : np.ndarray of int, shape (n_samples,)
-        0-based positional indices within the group after potential flip.
-        R equivalent: ``basicOrdRefG2[[8]]``  (= ``indNewNew``), but
-        converted to 0-based (R is 1-based).
+    within_group_indices : np.ndarray de int, forma (n_muestras,)
+        Indices posicionales base 0 dentro del grupo tras posible inversion.
+        Equivalente en R: ``basicOrdRefG2[[8]]``  (= ``indNewNew``), pero
+        convertido a base 0 (R usa base 1).
 
     core_genes : list[str]
-        Core gene symbols in the order used.
+        Simbolos de genes centrales en el orden utilizado.
 
     day_genes : list[str]
-        Core genes (exc. ARNTL, DBP) with peak in [0, π).
+        Genes centrales (exc. ARNTL, DBP) con pico en [0, π).
 
     night_genes : list[str]
-        Core genes (exc. ARNTL, DBP) with peak in [π, 2π).
+        Genes centrales (exc. ARNTL, DBP) con pico en [π, 2π).
 
-    pre_sample_order : np.ndarray of int
-        Sample order from Step 2.1 (before the Step 2.2 check).
-        R equivalent: ``preOrdRefG2[[1]]``.
+    pre_sample_order : np.ndarray de int
+        Orden de muestras del Paso 2.1 (antes de la verificacion del Paso 2.2).
+        Equivalente en R: ``preOrdRefG2[[1]]``.
 
-    pre_circular_scale : np.ndarray of float
-        Circular scale from Step 2.1.
-        R equivalent: ``preOrdRefG2[[2]]``.
+    pre_circular_scale : np.ndarray de float
+        Escala circular del Paso 2.1.
+        Equivalente en R: ``preOrdRefG2[[2]]``.
 
     pre_expr_ordered : pd.DataFrame
-        Expression matrix ordered by Step 2.1.
-        R equivalent: ``preOrdRefG2[[3]]``.
+        Matriz de expresion ordenada por el Paso 2.1.
+        Equivalente en R: ``preOrdRefG2[[3]]``.
 
-    pre_peak_times : np.ndarray of float
-        FMM peak times from Step 2.1.
-        R equivalent: ``preOrdRefG2[[4]]``.
+    pre_peak_times : np.ndarray de float
+        Tiempos de pico FMM del Paso 2.1.
+        Equivalente en R: ``preOrdRefG2[[4]]``.
 
-    pre_fmm_params : np.ndarray of float, shape (n_core_genes, 5)
-        FMM parameters from Step 2.1.
-        R equivalent: ``preOrdRefG2[[6]]``  (= ``parCore``).
+    pre_fmm_params : np.ndarray de float, forma (n_genes_core, 5)
+        Parametros FMM del Paso 2.1.
+        Equivalente en R: ``preOrdRefG2[[6]]``  (= ``parCore``).
 
     pre_direction_reversed : bool
-        True if Step 2.1 reversed the direction (DBP in wrong half).
-        R equivalent: ``preOrdRefG2[[13]]``  (= ``reverse``).
+        True si el Paso 2.1 invirtio la direccion (DBP en la mitad incorrecta).
+        Equivalente en R: ``preOrdRefG2[[13]]``  (= ``reverse``).
     """
 
     sample_order:           np.ndarray
@@ -156,12 +161,12 @@ class PreliminaryOrderResult:
 
     def summary(self) -> str:
         lines = [
-            "=== Preliminary Order Summary ===",
-            f"  Direction flipped    : {self.direction_flipped}",
-            f"  Step-2.1 reversed   : {self.pre_direction_reversed}",
-            f"  Day genes  (0..π)   : {self.day_genes}",
-            f"  Night genes (π..2π) : {self.night_genes}",
-            f"  Core gene peaks     : {np.round(self.peak_times, 3).tolist()}",
+            "=== Resumen de Ordenamiento Preliminar ===",
+            f"  Direccion invertida  : {self.direction_flipped}",
+            f"  Paso 2.1 invertido  : {self.pre_direction_reversed}",
+            f"  Genes dia  (0..π)   : {self.day_genes}",
+            f"  Genes noche (π..2π) : {self.night_genes}",
+            f"  Picos genes core    : {np.round(self.peak_times, 3).tolist()}",
         ]
         return "\n".join(lines)
 
@@ -172,29 +177,31 @@ class PreliminaryOrderResult:
 
 class PreliminaryOrderEstimator:
     """
-    Implement Stage 2 of CIRCUST: set the biological reference frame.
+    Implementa la Etapa 2 de CIRCUST: establecer el marco de referencia
+    biologico.
 
-    Runs two sub-steps mirroring the R pipeline:
-      1. ``basicPreOder_cores`` — rotate so ARNTL sits at π, detect
-         direction from DBP's position.
-      2. ``basicOder_cores``   — refined consistency check; flip if
-         the biology looks inconsistent.
+    Ejecuta dos sub-pasos reflejando el pipeline de R:
+      1. ``basicPreOder_cores`` — rota para que ARNTL quede en π, detecta
+         la direccion desde la posicion de DBP.
+      2. ``basicOder_cores``   — verificacion de consistencia refinada;
+         invierte si la biologia parece inconsistente.
 
-    Parameters
+    Parametros
     ----------
     arntl_gene : str
-        Anchor gene expected to peak near subjective midnight.
-        Default: ``"ARNTL"``.
+        Gen ancla que se espera tenga su pico cerca de la medianoche
+        subjetiva. Por defecto: ``"ARNTL"``.
 
     dbp_gene : str
-        Direction-determining gene expected to peak in the active phase
-        (first half, [0, π)).  Default: ``"DBP"``.
+        Gen determinante de direccion que se espera tenga su pico en la
+        fase activa (primera mitad, [0, π)). Por defecto: ``"DBP"``.
 
     cry1_gene : str
-        Gene used in the refined consistency check.  Default: ``"CRY1"``.
+        Gen usado en la verificacion de consistencia refinada.
+        Por defecto: ``"CRY1"``.
 
     verbose : bool
-        Print progress messages.
+        Imprimir mensajes de progreso.
     """
 
     def __init__(
@@ -210,7 +217,7 @@ class PreliminaryOrderEstimator:
         self.verbose    = verbose
 
     # ------------------------------------------------------------------
-    # Public API
+    # API publica
     # ------------------------------------------------------------------
 
     def run(
@@ -219,40 +226,40 @@ class PreliminaryOrderEstimator:
         core_genes: list[str],
     ) -> PreliminaryOrderResult:
         """
-        Run Stage 2 (Steps 2.1 and 2.2).
+        Ejecuta la Etapa 2 (Pasos 2.1 y 2.2).
 
-        Parameters
+        Parametros
         ----------
         refined : OutlierRefinementResult
-            Output of ``OutlierRefiner.run()``.  Provides
+            Salida de ``OutlierRefiner.run()``. Proporciona
             ``fmm_fits_final``, ``fmm_peak_times_final``,
-            ``expr_norm_final``, and ``cpca_final``.
+            ``expr_norm_final`` y ``cpca_final``.
 
-        core_genes : list of str
-            Ordered list of core clock gene symbols (same order used in
-            ``CPCA`` and ``OutlierRefiner``).
+        core_genes : list de str
+            Lista ordenada de simbolos de genes reloj centrales (mismo orden
+            usado en ``CPCA`` y ``OutlierRefiner``).
 
-        Returns
-        -------
+        Devuelve
+        --------
         PreliminaryOrderResult
         """
-        self._log("=== Stage 2: Preliminary Ordering ===")
+        self._log("=== Etapa 2: Ordenamiento Preliminar ===")
 
-        # ── Step 2.1: basicPreOder_cores ─────────────────────────────────
-        self._log("  Step 2.1 — rotating to ARNTL reference frame ...")
+        # ── Paso 2.1: basicPreOder_cores ─────────────────────────────────
+        self._log("  Paso 2.1 — rotando al marco de referencia ARNTL ...")
         (o_pre, esc_pre, mat_pre, peaks_pre, r2_fmm, par_pre,
          names_day, names_night, reversed_21) = self._pre_order(
             refined, core_genes
         )
 
-        # ── Step 2.2: basicOder_cores ─────────────────────────────────────
-        self._log("  Step 2.2 — checking biological consistency ...")
+        # ── Paso 2.2: basicOder_cores ─────────────────────────────────────
+        self._log("  Paso 2.2 — verificando consistencia biologica ...")
         (o_fin, esc_fin, mat_fin, peaks_fin,
          pars_fin, flipped_22, ind_new) = self._basic_order(
             o_pre, esc_pre, mat_pre, peaks_pre, par_pre, core_genes
         )
 
-        # Overall direction flag (either step could have reversed)
+        # Flag de direccion global (cualquiera de los pasos pudo haber invertido)
         direction_flipped = reversed_21 ^ flipped_22
 
         result = PreliminaryOrderResult(
@@ -279,7 +286,7 @@ class PreliminaryOrderEstimator:
         return result
 
     # ------------------------------------------------------------------
-    # Step 2.1 — basicPreOder_cores
+    # Paso 2.1 — basicPreOder_cores
     # ------------------------------------------------------------------
 
     def _pre_order(
@@ -288,19 +295,19 @@ class PreliminaryOrderEstimator:
         core_genes: list[str],
     ) -> tuple:
         """
-        R equivalent: ``basicPreOder_cores`` (lines 4192-4263).
+        Equivalente en R: ``basicPreOder_cores`` (lineas 4192-4263).
 
-        Returns
-        -------
-        o_new       : np.ndarray  — sample ordering indices (columns of expr)
-        esc_new     : np.ndarray  — circular scale in [0, 2π)
-        mat_new     : pd.DataFrame — full matrix in new order
-        peaks       : np.ndarray  — FMM peak times per core gene
-        r2_fmm      : np.ndarray  — R² per core gene (from final fits)
-        par_core    : np.ndarray  shape (n_core, 5) — [M, A, α, β, ω]
-        names_day   : list[str]   — core genes with peak in [0, π)
-        names_night : list[str]   — core genes with peak in [π, 2π)
-        reversed    : bool        — True if direction was flipped here
+        Devuelve
+        --------
+        o_new       : np.ndarray  — indices de ordenamiento de muestras (columnas de expr)
+        esc_new     : np.ndarray  — escala circular en [0, 2π)
+        mat_new     : pd.DataFrame — matriz completa en nuevo orden
+        peaks       : np.ndarray  — tiempos de pico FMM por gen central
+        r2_fmm      : np.ndarray  — R² por gen central (de ajustes finales)
+        par_core    : np.ndarray  forma (n_core, 5) — [M, A, α, β, ω]
+        names_day   : list[str]   — genes centrales con pico en [0, π)
+        names_night : list[str]   — genes centrales con pico en [π, 2π)
+        reversed    : bool        — True si la direccion se invirtio aqui
         """
         circular_scale = refined.cpca_final.circular_scale   # escalaPhi8
         expr_ordered   = refined.expr_norm_final              # mFullTissueNorm
@@ -309,28 +316,28 @@ class PreliminaryOrderEstimator:
 
         n_core = len(core_genes)
 
-        # ── R² values from final-ordering FMM fits (m3r2[:,0]) ───────────
+        # ── Valores R² de ajustes FMM con ordenamiento final (m3r2[:,0]) ──
         r2_fmm = np.array([
             fmm_fits[g].r2 if g in fmm_fits else float("nan")
             for g in core_genes
         ])
 
-        # ── ARNTL and DBP peak times in the original CPCA frame ──────────
+        # ── Tiempos de pico ARNTL y DBP en el marco CPCA original ────────
         arntl_peak = peak_times_fin[self.arntl_gene]  # peakRefEpidermis2
         dbp_peak   = peak_times_fin[self.dbp_gene]    # peakDBPEpidermis2
 
-        # ── Rotate circular scale: ARNTL → π ─────────────────────────────
+        # ── Rotar escala circular: ARNTL → π ─────────────────────────────
         # R: escTEpidermis <- order((listaStep1[[2]] - peakRef + pi) %% (2π))
         rotated = (circular_scale - arntl_peak + pi) % (2.0 * pi)
         esc_T   = np.argsort(rotated)          # escTEpidermis
         esc2    = rotated[esc_T]               # esc2
 
-        # ── Direction: forward or reverse ─────────────────────────────────
+        # ── Direccion: directa o inversa ─────────────────────────────────
         # R: if((peakDBP - peakRef + π) %% (2π) < π) → forward
         dbp_rotated = (dbp_peak - arntl_peak + pi) % (2.0 * pi)
-        forward     = dbp_rotated < pi          # True → keep direction
+        forward     = dbp_rotated < pi          # True → mantener direccion
 
-        # ── Re-parameterise each core gene's FMM in the new frame ─────────
+        # ── Reparametrizar el FMM de cada gen central en el nuevo marco ───
         # R (per gene i):
         #   newAlpha = (alpha_i - peakRef + π) %% 2π
         #   if forward: peak_i = compUU(newAlpha, beta_i, omega_i)
@@ -361,7 +368,7 @@ class PreliminaryOrderEstimator:
                 peaks[i]    = fmm_peak_time(na2, nb2, omega)
                 par_core[i] = [M, A, na2, nb2, omega]
 
-        # ── Reorder matrix columns ─────────────────────────────────────────
+        # ── Reordenar columnas de la matriz ───────────────────────────────
         if forward:
             o_new   = esc_T
             esc_new = esc2
@@ -373,7 +380,7 @@ class PreliminaryOrderEstimator:
 
         mat_new.columns = range(mat_new.shape[1])
 
-        # ── Classify as day / night (excluding ARNTL and DBP) ─────────────
+        # ── Clasificar como dia / noche (excluyendo ARNTL y DBP) ─────────
         names_day   = []
         names_night = []
         for i, gene in enumerate(core_genes):
@@ -387,14 +394,14 @@ class PreliminaryOrderEstimator:
         self._log(
             f"    ARNTL peak: {arntl_peak:.3f} rad  |  "
             f"DBP rotated: {dbp_rotated:.3f} rad  |  "
-            f"Direction: {'forward' if forward else 'REVERSED'}"
+            f"Direccion: {'directa' if forward else 'INVERTIDA'}"
         )
 
         return (o_new, esc_new, mat_new, peaks, r2_fmm, par_core,
                 names_day, names_night, not forward)
 
     # ------------------------------------------------------------------
-    # Step 2.2 — basicOder_cores
+    # Paso 2.2 — basicOder_cores
     # ------------------------------------------------------------------
 
     def _basic_order(
@@ -407,19 +414,19 @@ class PreliminaryOrderEstimator:
         core_genes: list[str],
     ) -> tuple:
         """
-        R equivalent: ``basicOder_cores`` (lines 4527-4594).
+        Equivalente en R: ``basicOder_cores`` (lineas 4527-4594).
 
-        Checks biological consistency and flips if needed.
+        Verifica consistencia biologica e invierte si es necesario.
 
-        Returns
-        -------
+        Devuelve
+        --------
         o_new      : np.ndarray
         esc_new    : np.ndarray
         mat_new    : pd.DataFrame
         peaks_new  : np.ndarray
-        pars_new   : np.ndarray  shape (n_core, 5)
+        pars_new   : np.ndarray  forma (n_core, 5)
         flipped    : bool
-        ind_new    : np.ndarray  (0-based positional indices)
+        ind_new    : np.ndarray  (indices posicionales base 0)
         """
         arntl_i = core_genes.index(self.arntl_gene) if self.arntl_gene in core_genes else None
         dbp_i   = core_genes.index(self.dbp_gene)   if self.dbp_gene   in core_genes else None
@@ -427,8 +434,8 @@ class PreliminaryOrderEstimator:
 
         if dbp_i is None:
             self._log(
-                f"  WARNING: {self.dbp_gene} not found in core_genes; "
-                "skipping direction check."
+                f"  AVISO: {self.dbp_gene} no encontrado en core_genes; "
+                "omitiendo verificacion de direccion."
             )
             n = len(o)
             return o, esc, mat, peaks, par, False, np.arange(n)
@@ -436,7 +443,7 @@ class PreliminaryOrderEstimator:
         dbp_peak  = peaks[dbp_i]
         n_core    = len(core_genes)
 
-        # Count genes in [0, π) excluding ARNTL and DBP
+        # Contar genes en [0, π) excluyendo ARNTL y DBP
         peak_d = sum(
             1 for i, g in enumerate(core_genes)
             if g != self.arntl_gene and g != self.dbp_gene
@@ -444,12 +451,12 @@ class PreliminaryOrderEstimator:
         )
         mitad = int(np.floor((n_core - 2) / 2))
 
-        # aviso conditions (R lines 4531-4537)
+        # condiciones aviso (R lineas 4531-4537)
         p6am  = 1.0 - np.cos(dbp_peak)          # 1-cos(DBP) — distance from 0
         p6pm  = 1.0 - np.cos(dbp_peak - pi)     # 1-cos(DBP-π) — distance from π
         aviso = (p6am <= 0.1) or (p6pm <= 0.1) or (peak_d < mitad)
 
-        # Exclusion: don't flip if DBP < CRY1 < ARNTL (all ascending)
+        # Exclusion: no invertir si DBP < CRY1 < ARNTL (todo ascendente)
         if aviso and cry1_i is not None and arntl_i is not None:
             excl  = (peaks[dbp_i] < peaks[cry1_i] < peaks[arntl_i])
             flip  = not excl
@@ -462,7 +469,7 @@ class PreliminaryOrderEstimator:
 
         if flip:
             self._log(
-                f"    Flipping direction  "
+                f"    Invirtiendo direccion  "
                 f"(aviso=True, DBP_peak={dbp_peak:.3f}, "
                 f"peak_d={peak_d}/{mitad})"
             )
@@ -476,7 +483,7 @@ class PreliminaryOrderEstimator:
             pars_new[:, 3]  = (2.0 * pi - par[:, 3]) % (2.0 * pi)  # β
             ind_new   = np.arange(n - 1, -1, -1)
         else:
-            self._log("    Direction is consistent — no flip needed.")
+            self._log("    La direccion es consistente — no se necesita inversion.")
             peaks_new = peaks.copy()
             o_new     = o.copy()
             esc_new   = esc.copy()
@@ -487,7 +494,7 @@ class PreliminaryOrderEstimator:
         return o_new, esc_new, mat_new, peaks_new, pars_new, flip, ind_new
 
     # ------------------------------------------------------------------
-    # Utility
+    # Utilidad
     # ------------------------------------------------------------------
 
     def _log(self, message: str) -> None:

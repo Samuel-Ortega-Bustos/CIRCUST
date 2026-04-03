@@ -1,32 +1,34 @@
 """
 circust/candidate_selection.py
 ==============================
-Stage 3.2: Candidate gene set selection via circular-sector filtering.
+Etapa 3.2: Seleccion del conjunto de genes candidatos mediante filtrado
+por sectores circulares.
 
-Selects genes whose expression profiles show strong rhythmic behaviour
-according to both non-parametric (NP R²) and parametric (FMM) criteria.
-Genes are partitioned into 8 sectors of 45° each on the circular phase
-axis, and within each sector the top candidates are retained.
+Selecciona genes cuyos perfiles de expresion muestran un comportamiento
+ritmico fuerte segun criterios no parametricos (R² NP) y parametricos (FMM).
+Los genes se dividen en 8 sectores de 45° cada uno sobre el eje de fase
+circular, y dentro de cada sector se retienen los mejores candidatos.
 
-Algorithm
+Algoritmo
 ---------
-1. Filter genes with NP R² above the median.
-2. Compute the Cosinor acrophase for every surviving gene.
-3. Define 8 equispaced 45° sectors centred on the circular median of
-   all acrophases.
-4. Within each sector, iterate through genes sorted by NP R² (descending):
-   - Fit FMM and check ω > 0.1 (not too spiky) and R²_par > threshold.
-   - Accept up to *tam* genes per sector, continuing beyond *tam* only
-     while the gene's NP R² remains below the 75th percentile of the
-     full distribution.
-5. Collect all accepted genes across sectors.
+1. Filtrar genes con R² NP por encima de la mediana.
+2. Calcular la acrofase Cosinor para cada gen superviviente.
+3. Definir 8 sectores equiespaciados de 45° centrados en la mediana
+   circular de todas las acrofases.
+4. Dentro de cada sector, iterar por genes ordenados por R² NP (descendente):
+   - Ajustar FMM y verificar ω > 0.1 (no demasiado puntiagudo) y
+     R²_par > umbral.
+   - Aceptar hasta *tam* genes por sector, continuando mas alla de *tam*
+     solo mientras el R² NP del gen permanezca por debajo del percentil 75
+     de la distribucion completa.
+5. Recopilar todos los genes aceptados de todos los sectores.
 
-R equivalent
-------------
-``minSetCand3_v2_cores()`` (lines 1242–1692 of ``functionGTEX_cores.R``).
-
-Pipeline position
+Equivalente en R
 -----------------
+``minSetCand3_v2_cores()`` (lineas 1242–1692 de ``functionGTEX_cores.R``).
+
+Posicion en el pipeline
+-----------------------
     NonParametricScorer  →  **CandidateSelector**  →  ReferenceSetBuilder
 """
 from __future__ import annotations
@@ -41,23 +43,23 @@ from circust.fitting.fmm import FMMModel, fmm_peak_time
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Circular statistics helpers
+# Funciones auxiliares de estadistica circular
 # ═══════════════════════════════════════════════════════════════════════════
 
 def circular_median(angles: np.ndarray) -> float:
     """
-    Circular median: the angle θ that minimises  Σ d(θ, θᵢ)  where
-    *d* is the geodesic (arc-length) distance on the unit circle.
+    Mediana circular: el angulo θ que minimiza  Σ d(θ, θᵢ)  donde
+    *d* es la distancia geodesica (longitud de arco) en el circulo unitario.
 
-    Matches the definition used by R's ``circular::median.circular()``.
+    Coincide con la definicion de ``circular::median.circular()`` de R.
 
-    Parameters
+    Parametros
     ----------
-    angles : (n,) array in [0, 2π).
+    angles : array (n,) en [0, 2π).
 
-    Returns
-    -------
-    float — circular median in [0, 2π).
+    Devuelve
+    --------
+    float — mediana circular en [0, 2π).
     """
     angles = np.asarray(angles, dtype=np.float64) % (2.0 * pi)
     n = len(angles)
@@ -66,8 +68,8 @@ def circular_median(angles: np.ndarray) -> float:
     if n == 1:
         return float(angles[0])
 
-    # Evaluate cost at every observed angle (O(n²) — adequate for ≤ 20 000
-    # genes; the R circular package does the same).
+    # Evaluar coste en cada angulo observado (O(n²) — adecuado para ≤ 20 000
+    # genes; el paquete circular de R hace lo mismo).
     best_cost  = np.inf
     best_angle = angles[0]
     for candidate in angles:
@@ -87,50 +89,50 @@ def assign_sectors(
     n_sectors: int = 8,
 ) -> np.ndarray:
     """
-    Assign each peak angle to one of *n_sectors* equi-spaced sectors
-    centred on *reference*.
+    Asigna cada angulo de pico a uno de *n_sectors* sectores equiespaciados
+    centrados en *reference*.
 
-    The sectors are numbered 1 … n_sectors.  Sector 1 contains peaks
-    closest to *reference* (in the counter-clockwise direction); sector
-    *n_sectors* is the furthest.
+    Los sectores se numeran 1 … n_sectors. El sector 1 contiene los picos
+    mas cercanos a *reference* (en direccion antihoraria); el sector
+    *n_sectors* es el mas lejano.
 
-    This vectorises the 8-cascading-if structure in R (lines 1300–1334).
+    Vectoriza la estructura de 8 if en cascada de R (lineas 1300–1334).
 
-    Parameters
+    Parametros
     ----------
-    peaks     : (n,) array of angles in [0, 2π).
-    reference : float — circular median used as the origin.
-    n_sectors : int — default 8 (45° each).
+    peaks     : array (n,) de angulos en [0, 2π).
+    reference : float — mediana circular usada como origen.
+    n_sectors : int — por defecto 8 (45° cada uno).
 
-    Returns
-    -------
-    (n,) int array — sector labels in {1, 2, …, n_sectors}.
+    Devuelve
+    --------
+    array int (n,) — etiquetas de sector en {1, 2, …, n_sectors}.
     """
     peaks = np.asarray(peaks, dtype=np.float64)
-    # Rotate so that reference ≡ 0, then map to sector.
+    # Rotar para que reference ≡ 0, luego mapear a sector.
     rotated = (peaks - reference) % (2.0 * pi)
-    # R assigns sector 1 to the arc CLOSEST to reference (highest rotated
-    # values, i.e. those just below 2π), sector 8 to the arc centred at
-    # reference − 7π/4.  The R code checks sectors from the top down:
+    # R asigna sector 1 al arco MAS CERCANO a reference (valores rotados
+    # mas altos, justo debajo de 2π), sector 8 al arco centrado en
+    # reference − 7π/4.  El codigo R comprueba sectores de arriba a abajo:
     #   if rotated > boundary_2  → sector 1
     #   if boundary_3 < rotated < boundary_2 → sector 2
     #   …
     #   if rotated < boundary_8  → sector 8
-    # The boundaries are at k·π/4 for k = 1…7.
-    # Mapping: sector = n_sectors − floor(rotated / (2π / n_sectors)).
+    # Los limites estan en k·π/4 para k = 1…7.
+    # Mapeo: sector = n_sectors − floor(rotated / (2π / n_sectors)).
     sector_width = 2.0 * pi / n_sectors
     sectors = n_sectors - np.floor(rotated / sector_width).astype(int)
-    # Clamp to [1, n_sectors] for floating-point edge cases.
+    # Limitar a [1, n_sectors] para casos limite de punto flotante.
     sectors = np.clip(sectors, 1, n_sectors)
     return sectors
 
 
 def sector_boundaries(reference: float, n_sectors: int = 8) -> np.ndarray:
     """
-    Return the *n_sectors* sector centre-points (m1…m8 in the R code).
+    Devuelve los *n_sectors* puntos centrales de sector (m1…m8 en R).
 
-    R equivalent: ``m1 = peakRef;  m2 = (peakRef − π/4) mod 2π; …``
-    (lines 1280–1287).
+    Equivalente en R: ``m1 = peakRef;  m2 = (peakRef − π/4) mod 2π; …``
+    (lineas 1280–1287).
     """
     return np.array([
         (reference - k * pi / (n_sectors / 2)) % (2.0 * pi)
@@ -144,21 +146,21 @@ def reduce_sector(
     names: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Iteratively remove the lowest-R² gene from a sector until all
-    remaining genes exceed the 75th-percentile R² threshold **or** the
-    sector already has ≤ 25 genes.
+    Elimina iterativamente el gen con menor R² de un sector hasta que todos
+    los genes restantes superan el umbral del percentil 75 de R² **o** el
+    sector ya tiene ≤ 25 genes.
 
-    R equivalent: ``reduceSectors_v2()`` (lines 140–161).
+    Equivalente en R: ``reduceSectors_v2()`` (lineas 140–161).
 
-    Parameters
+    Parametros
     ----------
-    peaks : (k,) array of peak angles.
-    r2    : (k,) array of R² values.
-    names : (k,) array of gene name strings.
+    peaks : array (k,) de angulos de pico.
+    r2    : array (k,) de valores de R².
+    names : array (k,) de nombres de genes (cadenas).
 
-    Returns
-    -------
-    (peaks, r2, names) — filtered arrays.
+    Devuelve
+    --------
+    (peaks, r2, names) — arrays filtrados.
     """
     peaks = np.array(peaks, dtype=np.float64)
     r2    = np.array(r2, dtype=np.float64)
@@ -169,7 +171,7 @@ def reduce_sector(
 
     q75 = float(np.quantile(r2, 0.75))
 
-    # R condition: keep pruning while (n > 25 OR count_above_Q75 > 25).
+    # Condicion R: seguir podando mientras (n > 25 O count_above_Q75 > 25).
     while len(r2) > 0:
         n_above = int(np.sum(r2 > q75))
         if not (len(peaks) > 25 or n_above > 25):
@@ -185,62 +187,62 @@ def reduce_sector(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Result dataclass
+# Dataclass de resultado
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class CandidateResult:
     """
-    Output of :class:`CandidateSelector`.
+    Salida de :class:`CandidateSelector`.
 
-    Attributes
-    ----------
+    Atributos
+    ---------
     gene_names : list[str]
-        Accepted candidate gene symbols.
+        Simbolos de genes candidatos aceptados.
         R: ``namesIn``  → ``outSetCandRefG[[1]]``.
 
-    expr_data : pd.DataFrame, shape (n_accepted, n_samples)
-        Expression rows for accepted genes.
+    expr_data : pd.DataFrame, forma (n_aceptados, n_muestras)
+        Filas de expresion para genes aceptados.
         R: ``datosParTissue``  → ``outSetCandRefG[[2]]``.
 
     fmm_fitted : pd.DataFrame
-        FMM fitted values.
+        Valores ajustados FMM.
         R: ``adjParamTissue``  → ``outSetCandRefG[[3]]``.
 
-    fmm_params : np.ndarray, shape (n_accepted, 5)
-        FMM parameters [M, A, α, β, ω] per gene.
+    fmm_params : np.ndarray, forma (n_aceptados, 5)
+        Parametros FMM [M, A, α, β, ω] por gen.
         R: ``paramParamTissue``  → ``outSetCandRefG[[4]]``.
 
     cos_fitted : pd.DataFrame
-        Cosinor fitted values.
+        Valores ajustados Cosinor.
         R: ``adjCosTissue``  → ``outSetCandRefG[[5]]``.
 
-    cos_params : np.ndarray, shape (n_accepted, 3)
-        Cosinor parameters [M, A, φ] per gene.
+    cos_params : np.ndarray, forma (n_aceptados, 3)
+        Parametros Cosinor [M, A, φ] por gen.
         R: ``paramCosTissue``  → ``outSetCandRefG[[6]]``.
 
-    fmm_peaks : np.ndarray, shape (n_accepted,)
-        FMM peak times (via compUU) per gene.
+    fmm_peaks : np.ndarray, forma (n_aceptados,)
+        Tiempos de pico FMM (via compUU) por gen.
         R: ``peaksIn``  → ``outSetCandRefG[[7]]``.
 
-    sector_labels : np.ndarray of int, shape (n_accepted,)
-        Sector assignment (1–8) per gene.
+    sector_labels : np.ndarray de int, forma (n_aceptados,)
+        Asignacion de sector (1–8) por gen.
         R: ``regIn``  → ``outSetCandRefG[[8]]``.
 
-    r2_par : np.ndarray, shape (n_accepted,)
-        Parametric R² per gene.
+    r2_par : np.ndarray, forma (n_aceptados,)
+        R² parametrico por gen.
         R: ``r2ParIn``  → ``outSetCandRefG[[9]]``.
 
     ranked_r2_np : np.ndarray
-        All genes' NP R² sorted descending (distribution reference).
+        R² NP de todos los genes ordenado descendente (referencia de distribucion).
         R: ``mDistR2Tissue``  → ``outSetCandRefG[[11]]``.
 
-    sector_centres : np.ndarray, shape (8,)
-        The 8 sector centre-points m1…m8.
+    sector_centres : np.ndarray, forma (8,)
+        Los 8 puntos centrales de sector m1…m8.
         R: ``outSetCandRefG[[20]]`` … ``outSetCandRefG[[27]]``.
 
     discarded_genes : list[str]
-        Genes examined but rejected (failed ω or R²_par check).
+        Genes examinados pero rechazados (fallo en ω o R²_par).
         R: ``nameDiscard``  → ``outSetCandRefG[[28]]``.
     """
 
@@ -261,10 +263,10 @@ class CandidateResult:
         n = len(self.gene_names)
         n_sectors_used = len(np.unique(self.sector_labels)) if n > 0 else 0
         lines = [
-            "=== Candidate Selection Summary ===",
-            f"  Genes accepted      : {n}",
-            f"  Sectors populated   : {n_sectors_used} / 8",
-            f"  Genes discarded     : {len(self.discarded_genes)}",
+            "=== Resumen de Seleccion de Candidatos ===",
+            f"  Genes aceptados     : {n}",
+            f"  Sectores poblados   : {n_sectors_used} / 8",
+            f"  Genes descartados   : {len(self.discarded_genes)}",
         ]
         if n > 0:
             for s in range(1, 9):
@@ -280,35 +282,36 @@ class CandidateResult:
 
 class CandidateSelector:
     """
-    Select candidate rhythmic genes via 8-sector FMM-validated filtering.
+    Selecciona genes ritmicos candidatos mediante filtrado por 8 sectores
+    validado con FMM.
 
-    R equivalent: ``minSetCand3_v2_cores()`` (lines 1242–1692).
+    Equivalente en R: ``minSetCand3_v2_cores()`` (lineas 1242–1692).
 
-    Parameters
+    Parametros
     ----------
     tam : int
-        Target number of genes per sector before the "continue beyond
-        target" rule kicks in.  R default: 50.
+        Numero objetivo de genes por sector antes de que se active la
+        regla de "continuar mas alla del objetivo". Por defecto en R: 50.
 
     omega_min : float
-        Minimum FMM ω to accept a gene (rejects spiky fits).
-        R default: 0.1.
+        ω minimo de FMM para aceptar un gen (rechaza ajustes puntiagudos).
+        Por defecto en R: 0.1.
 
     r2_par_floor : float
-        Absolute floor for parametric R²; the effective threshold is
-        ``min(Q1_core_R2, r2_par_floor)``.  R default: 0.4.
+        Umbral absoluto minimo para R² parametrico; el umbral efectivo es
+        ``min(Q1_core_R2, r2_par_floor)``. Por defecto en R: 0.4.
 
     fmm_length_alpha_grid : int
-        Grid size for FMM α.  R default: 48.
+        Tamano de la rejilla para FMM α. Por defecto en R: 48.
 
     fmm_length_omega_grid : int
-        Grid size for FMM ω.  R default: 24.
+        Tamano de la rejilla para FMM ω. Por defecto en R: 24.
 
     fmm_num_reps : int
-        FMM refinement iterations.  R default: 3.
+        Iteraciones de refinamiento FMM. Por defecto en R: 3.
 
     verbose : bool
-        Print progress messages.
+        Imprimir mensajes de progreso.
     """
 
     def __init__(
@@ -330,7 +333,7 @@ class CandidateSelector:
         self.verbose               = verbose
 
     # ------------------------------------------------------------------
-    # Public API
+    # API publica
     # ------------------------------------------------------------------
 
     def run(
@@ -341,55 +344,56 @@ class CandidateSelector:
         r2_par_core:      np.ndarray,
     ) -> CandidateResult:
         """
-        Select candidate genes.
+        Selecciona genes candidatos.
 
-        Parameters
+        Parametros
         ----------
-        r2_np : (n_genes,) array
-            Non-parametric R² for every gene in the expression matrix.
+        r2_np : array (n_genes,)
+            R² no parametrico para cada gen en la matriz de expresion.
             R: ``obtainNPRefG[[5]]``.
 
-        expr_norm : pd.DataFrame, shape (n_genes, n_samples)
-            Full normalised expression matrix ordered by the preliminary
-            circular time.
+        expr_norm : pd.DataFrame, forma (n_genes, n_muestras)
+            Matriz de expresion normalizada completa ordenada por el
+            tiempo circular preliminar.
             R: ``preOrdRefG2[[3]]``  (= ``mFullTissueNorm``).
 
-        circular_scale : (n_samples,) array
-            Circular time axis from the preliminary ordering.
+        circular_scale : array (n_muestras,)
+            Eje temporal circular del ordenamiento preliminar.
             R: ``preOrdRefG2[[2]]``  (= ``escParTissue``).
 
-        r2_par_core : (n_core,) array
-            Parametric R² of the core clock genes (from the preliminary
-            ordering FMM fits).  Used to set the acceptance threshold.
+        r2_par_core : array (n_core,)
+            R² parametrico de los genes reloj centrales (de los ajustes
+            FMM del ordenamiento preliminar). Se usa para fijar el umbral
+            de aceptacion.
             R: ``basicOrdRefG2[[5]]``  (= ``R2ParcoreG``).
 
-        Returns
-        -------
+        Devuelve
+        --------
         CandidateResult
         """
-        self._log("=== Stage 3.2: Candidate Gene Selection ===")
+        self._log("=== Etapa 3.2: Seleccion de Genes Candidatos ===")
 
         all_genes   = expr_norm.index.values
         n_genes     = len(all_genes)
         r2_np       = np.asarray(r2_np, dtype=np.float64)
         circ        = np.asarray(circular_scale, dtype=np.float64)
 
-        # ── 1. Ranked NP R² distribution ──────────────────────────────────
+        # ── 1. Distribucion de R² NP ordenada ─────────────────────────────
         rank_order    = np.argsort(r2_np)[::-1]
         ranked_r2_np  = r2_np[rank_order]
         q3_all        = float(np.quantile(ranked_r2_np, 0.75))
 
-        # ── 2. Filter: NP R² > median ────────────────────────────────────
+        # ── 2. Filtro: R² NP > mediana ───────────────────────────────────
         r2_median = float(np.median(r2_np))
-        self._log(f"  Median NP R² = {r2_median:.3f}")
+        self._log(f"  Mediana R² NP = {r2_median:.3f}")
 
         mask_above_median = r2_np > r2_median
         genes_above       = all_genes[mask_above_median]
         r2_above          = r2_np[mask_above_median]
 
-        self._log(f"  Genes above median: {len(genes_above)}")
+        self._log(f"  Genes por encima de mediana: {len(genes_above)}")
 
-        # ── 3. Cosinor acrophase for every surviving gene ─────────────────
+        # ── 3. Acrofase Cosinor para cada gen superviviente ───────────────
         cos_model  = CosinorModel()
         cos_peaks  = np.empty(len(genes_above), dtype=np.float64)
         for i, gene in enumerate(genes_above):
@@ -397,21 +401,21 @@ class CandidateSelector:
             cr  = cos_model.fit(row, circ)
             cos_peaks[i] = (-cr.params["phi"]) % (2.0 * pi)
 
-        # ── 4. Sector assignment ──────────────────────────────────────────
+        # ── 4. Asignacion de sectores ────────────────────────────────────
         peak_ref = circular_median(cos_peaks)
         centres  = sector_boundaries(peak_ref)
         sectors  = assign_sectors(cos_peaks, peak_ref)
 
-        self._log(f"  Circular median of Cosinor peaks: {peak_ref:.3f} rad")
+        self._log(f"  Mediana circular de picos Cosinor: {peak_ref:.3f} rad")
         for s in range(1, 9):
             cnt = int(np.sum(sectors == s))
             self._log(f"    Sector {s}: {cnt} gene(s)")
 
-        # ── 5. Per-sector FMM filtering ───────────────────────────────────
+        # ── 5. Filtrado FMM por sector ────────────────────────────────────
         r2_par_threshold = min(
             float(np.quantile(r2_par_core, 0.25)), self.r2_par_floor
         )
-        self._log(f"  R²_par acceptance threshold: {r2_par_threshold:.3f}")
+        self._log(f"  Umbral de aceptacion R²_par: {r2_par_threshold:.3f}")
 
         fmm_model = FMMModel(
             length_alpha_grid=self.fmm_length_alpha_grid,
@@ -419,7 +423,7 @@ class CandidateSelector:
             num_reps=self.fmm_num_reps,
         )
 
-        # Accumulators (matching R's rbind/c patterns).
+        # Acumuladores (replicando los patrones rbind/c de R).
         acc_names:      list[str]         = []
         acc_expr:       list[np.ndarray]  = []
         acc_fmm_fit:    list[np.ndarray]  = []
@@ -441,7 +445,7 @@ class CandidateSelector:
             if len(sec_genes) == 0:
                 continue
 
-            # Sort by NP R² descending.
+            # Ordenar por R² NP descendente.
             order       = np.argsort(sec_r2_np)[::-1]
             sec_genes   = sec_genes[order]
             sec_r2_np   = sec_r2_np[order]
@@ -452,20 +456,20 @@ class CandidateSelector:
             in_sector   = 0
             rec         = 0
 
-            # R while-loop condition (lines 1345, 1387, etc.):
+            # Condicion del while de R (lineas 1345, 1387, etc.):
             # while (sector_has_genes &
             #        (in_sector < tam | (in_sector >= tam & R2_NP < Q3_all)) &
             #        rec <= len(genes) &
             #        R2_NP[rec] > max(Q1_sector, 0.4))
             while rec < len(sec_genes) and sec_r2_np[rec] > r2_floor_s:
-                # "Continue beyond target" gate.
+                # Puerta de "continuar mas alla del objetivo".
                 if in_sector >= self.tam and sec_r2_np[rec] >= q3_all:
                     break
 
                 gene = sec_genes[rec]
                 rec += 1
 
-                # Fit FMM.
+                # Ajustar FMM.
                 row = expr_norm.loc[gene].values.astype(np.float64)
                 fr  = fmm_model.fit(row, circ)
 
@@ -483,7 +487,7 @@ class CandidateSelector:
                     in_sector      += 1
                     total_accepted += 1
 
-                    # Cosinor fit for this gene.
+                    # Ajuste Cosinor para este gen.
                     cr = cos_model.fit(row, circ)
 
                     peak_fmm = fmm_peak_time(
@@ -512,9 +516,9 @@ class CandidateSelector:
                 f"examined {rec}           "
             )
 
-        self._log(f"  Total accepted: {total_accepted}")
+        self._log(f"  Total aceptados: {total_accepted}")
 
-        # ── 6. Build result ───────────────────────────────────────────────
+        # ── 6. Construir resultado ────────────────────────────────────────
         n_acc = len(acc_names)
         cols  = expr_norm.columns
 
@@ -546,7 +550,7 @@ class CandidateSelector:
         return result
 
     # ------------------------------------------------------------------
-    # Utility
+    # Utilidad
     # ------------------------------------------------------------------
 
     def _log(self, message: str, end: str = "\n") -> None:

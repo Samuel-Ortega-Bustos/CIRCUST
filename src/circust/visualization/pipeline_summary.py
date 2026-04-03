@@ -1,28 +1,28 @@
 """
 circust/visualization/pipeline_summary.py
 ==========================================
-End-to-end summary figure for the CIRCUST pipeline (Stages 1-2).
+Figura resumen de extremo a extremo del pipeline CIRCUST (Etapas 1-2).
 
   plot_pipeline_summary(cpca, outlier, order)
-      A single multi-panel figure with four key diagnostic views:
+      Figura única multipanel con cuatro vistas diagnósticas clave:
 
-        A. PC1 vs PC2 scatter (CPCA stage)   — shows circular structure
-        B. Residual heatmap (outlier stage)   — shows sample quality
-        C. Circular peak diagram (ordering)   — shows temporal programme
-        D. R² bar chart (ordering)            — shows fit quality
+        A. Dispersión PC1 vs PC2 (etapa CPCA)   — muestra estructura circular
+        B. Heatmap de residuos (etapa outlier)   — muestra calidad de muestras
+        C. Diagrama circular de picos (ordenación) — muestra programa temporal
+        D. Gráfico de barras R² (ordenación)     — muestra calidad del ajuste
 
-      Designed for thesis reports and presentations.
+      Diseñada para informes de tesis y presentaciones.
 
   plot_variance_explained(cpca)
-      Scree-style bar chart of variance explained by the first
-      principal components, with cumulative line overlay.
+      Gráfico de barras tipo scree de la varianza explicada por las
+      primeras componentes principales, con línea acumulada superpuesta.
 
   plot_expression_overview(expr_norm, core_genes, circular_scale, n_top)
-      Heatmap of normalised expression for the top-n most rhythmic
-      genes, ordered by circular phase.  Core genes are highlighted.
-      Provides a genome-wide snapshot of the circadian signal.
+      Heatmap de expresión normalizada para los n genes más rítmicos,
+      ordenados por fase circular. Los genes core se resaltan.
+      Proporciona una visión global de la señal circadiana a nivel genómico.
 
-All functions return a matplotlib Figure.  None call plt.show().
+Todas las funciones devuelven un matplotlib Figure. Ninguna llama a plt.show().
 """
 from typing import Optional
 

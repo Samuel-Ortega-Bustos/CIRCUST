@@ -1,54 +1,54 @@
 """
 circust/fitting/fmm.py
 =======================
-Flexible Multivariate Model (FMM) — single-component rhythm fitting.
+Modelo Flexible Multivariante (FMM) — ajuste ritmico de un solo componente.
 
-Mathematical model
-------------------
-    y(t) = M + A · cos(β + 2·atan(ω·tan((t − α)/2)))
+Modelo matematico
+-----------------
+    y(t) = M + A * cos(beta + 2*atan(omega*tan((t - alpha)/2)))
 
-The inner term  Φ(t) = β + 2·atan(ω·tan((t − α)/2))  is a Möbius
-transformation of the circle.  When ω = 1 it reduces to a simple
-phase shift
-As ω → 0 the waveform approaches a cosine (Cosinor).
-The key advantage over Cosinor is that ω controls *waveform skewness*:
-the model can represent asymmetric peaks found in real circadian data.
+El termino interno  Phi(t) = beta + 2*atan(omega*tan((t - alpha)/2))  es una
+transformacion de Mobius del circulo.  Cuando omega = 1 se reduce a un
+simple desfase. Cuando omega -> 0 la forma de onda se aproxima a un coseno
+(Cosinor). La ventaja clave sobre Cosinor es que omega controla la *asimetria
+de la forma de onda*: el modelo puede representar picos asimetricos presentes
+en datos circadianos reales.
 
-Parameters
+Parametros
 ----------
-M     mesor       — mean level
-A     amplitude   — always > 0
-α     alpha       — peak-region location in [0, 2π)
-β     beta        — waveform shape parameter in [0, 2π)
-ω     omega       — skewness in (0, omegaMax]
+M     mesor       — nivel medio
+A     amplitud    — siempre > 0
+alpha             — localizacion de la region del pico en [0, 2*pi)
+beta              — parametro de forma en [0, 2*pi)
+omega             — asimetria en (0, omegaMax]
 
-Estimation algorithm
---------------------
-This is an exact Python port of ``fitFMM_Par()`` from ``FMM.R``.
+Algoritmo de estimacion
+-----------------------
+Port exacto de ``fitFMM_Par()`` de ``FMM.R``.
 
-Step 1 — Grid search
-    For each (α, ω) combination on a grid, fix those two parameters
-    and fit M, A, β via Cosinor OLS on the Möbius-transformed time
-    axis.  Select the candidate with the lowest RSS that also satisfies
-    amplitude stability constraints.
+Paso 1 — Busqueda en rejilla
+    Para cada combinacion (alpha, omega) en una rejilla, se fijan esos dos
+    parametros y se estiman M, A, beta por OLS Cosinor sobre el eje temporal
+    transformado por Mobius. Se selecciona el candidato con menor RSS que
+    tambien satisfaga las restricciones de estabilidad de amplitud.
 
-Step 2 — Nelder-Mead refinement
-    Polish the Step-1 estimate by minimising the RSS over all five
-    parameters simultaneously, subject to the same stability constraints
-    (infeasible points return ∞).
+Paso 2 — Refinamiento Nelder-Mead
+    Se pule la estimacion del Paso 1 minimizando el RSS sobre los cinco
+    parametros simultaneamente, sujeto a las mismas restricciones de
+    estabilidad (puntos infactibles devuelven infinito).
 
-Steps 1+2 are repeated ``num_reps`` times, each time narrowing the
-grid around the previous best estimate.
+Los Pasos 1+2 se repiten ``num_reps`` veces, cada vez estrechando la
+rejilla alrededor de la mejor estimacion anterior.
 
-R equivalent
-------------
+Equivalente en R
+----------------
 ``fitFMM_Par(vData, timePoints, lengthAlphaGrid=48, lengthOmegaGrid=24,
              omegaMax=1, numReps=3)``
 
-Returns
--------
+Devuelve
+--------
 FitResult
-    ``params`` keys: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
+    Claves de ``params``: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
 """
 import numpy as np
 from scipy.optimize import minimize
@@ -57,16 +57,16 @@ from circust.fitting.rhythm_model import FitResult, RhythmModel
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers  (mirror R's hidden functions)
+# Funciones internas auxiliares (replican funciones ocultas de R)
 # ---------------------------------------------------------------------------
 
 def fmm_peak_time(alpha: float, beta: float, omega: float) -> float:
     """
-    Compute the time of peak of an FMM wave (R's ``compUU``).
+    Calcula el momento del pico de una onda FMM (``compUU`` de R).
 
-    Formula:  t_U = α + 2·atan2((1/ω)·sin(−β/2), cos(−β/2))  mod 2π
+    Formula:  t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
 
-    R equivalent: ``compUU(al, be, om)`` (line 79 of functionGTEX_cores.R).
+    Equivalente en R: ``compUU(al, be, om)`` (linea 79 de functionGTEX_cores.R).
     """
     return float(
         (alpha + 2.0 * np.arctan2(
@@ -77,10 +77,10 @@ def fmm_peak_time(alpha: float, beta: float, omega: float) -> float:
 
 
 def _mobius(t: np.ndarray, alpha: float, omega: float) -> np.ndarray:
-    """Möbius transformation of the time axis.
+    """Transformacion de Mobius del eje temporal.
 
-    Φ(t) = 2·atan(ω·tan((t − α)/2))
-    R equivalent: ``parteMobius`` in ``step1FMM``.
+    Phi(t) = 2*atan(omega*tan((t - alpha)/2))
+    Equivalente en R: ``parteMobius`` en ``step1FMM``.
     """
     return 2.0 * np.arctan(omega * np.tan((t - alpha) / 2.0))
 
@@ -89,7 +89,7 @@ def _fmm_predict(
     t: np.ndarray,
     M: float, A: float, alpha: float, beta: float, omega: float,
 ) -> np.ndarray:
-    """Evaluate the FMM waveform at time points ``t``."""
+    """Evalua la forma de onda FMM en los puntos temporales ``t``."""
     phi = beta + _mobius(t, alpha, omega)
     return M + A * np.cos(phi)
 
@@ -101,10 +101,10 @@ def _step1(
     t: np.ndarray,
 ) -> np.ndarray:
     """
-    Step 1 (scalar): fix α and ω, estimate M, A, β via Cosinor OLS.
+    Paso 1 (escalar): fija alpha y omega, estima M, A, beta por OLS Cosinor.
 
-    Returns [M, A, alpha, beta, omega, RSS] — same layout as R's step1FMM.
-    Used only as a fallback; the vectorised version is preferred.
+    Devuelve [M, A, alpha, beta, omega, RSS] — mismo layout que step1FMM de R.
+    Se usa solo como fallback; la version vectorizada es preferible.
     """
     mob      = _mobius(t, alpha, omega)
     t_star   = alpha + mob
@@ -131,35 +131,35 @@ def _step1_grid(
     t: np.ndarray,
 ) -> np.ndarray:
     """
-    Vectorised Step 1: evaluate ALL (α, ω) grid points simultaneously.
+    Paso 1 vectorizado: evalua TODOS los puntos (alpha, omega) simultaneamente.
 
-    Replaces the Python ``for`` loop over the grid with a single set of
-    NumPy array operations, yielding a ~3× speedup.
+    Reemplaza el bucle ``for`` de Python sobre la rejilla con una sola pasada
+    de operaciones NumPy, obteniendo una aceleracion de ~3x.
 
-    Strategy
-    --------
-    For each (α, ω) pair the OLS problem reduces to a 2×2 normal-equation
-    system on the demeaned regressors [cos(t*), sin(t*)].  Demeaning makes
-    the system well-conditioned and avoids the near-singular 3×3 matrices
-    that appear when ω is close to zero.  The intercept M is then recovered
-    analytically from the mean equation.
-
-    Parameters
+    Estrategia
     ----------
-    alpha_grid : (A,) array of α values
-    omega_grid : (W,) array of ω values
-    data       : (N,) observed signal
-    t          : (N,) time points in [0, 2π)
+    Para cada par (alpha, omega) el problema OLS se reduce a un sistema de
+    ecuaciones normales 2x2 sobre los regresores centrados [cos(t*), sin(t*)].
+    El centrado hace que el sistema este bien condicionado y evita las matrices
+    3x3 casi singulares que aparecen cuando omega esta cerca de cero. El
+    intercepto M se recupera analiticamente de la ecuacion de medias.
 
-    Returns
-    -------
-    (A*W, 6) array — columns: [M, A, alpha, beta, omega, RSS]
-    Same column layout as the scalar ``_step1``.
+    Parametros
+    ----------
+    alpha_grid : array (A,) de valores alpha
+    omega_grid : array (W,) de valores omega
+    data       : array (N,) senal observada
+    t          : array (N,) puntos temporales en [0, 2*pi)
+
+    Devuelve
+    --------
+    array (A*W, 6) — columnas: [M, A, alpha, beta, omega, RSS]
+    Mismo layout de columnas que ``_step1`` escalar.
     """
     An, Wn, N = len(alpha_grid), len(omega_grid), len(t)
     AW = An * Wn
 
-    # ── Broadcast all trig in one shot: shapes (A, W, N) ────────────────
+    # ── Broadcasting de toda la trigonometria: formas (A, W, N) ─────────
     alpha_b = alpha_grid[:, None, None]   # (A, 1, 1)
     omega_b = omega_grid[None, :, None]   # (1, W, 1)
     t_b     = t[None, None, :]            # (1, 1, N)
@@ -170,10 +170,10 @@ def _step1_grid(
     zz     = np.sin(t_star).reshape(AW, N)   # (AW, N)
     mob_2d = mob.reshape(AW, N)              # (AW, N)
 
-    # ── Demeaned 2×2 OLS — avoids ill-conditioning near ω=0 ─────────────
+    # ── OLS 2x2 centrado — evita mal condicionamiento cerca de omega=0 ──
     xx_c = xx - xx.mean(axis=1, keepdims=True)   # (AW, N)
     zz_c = zz - zz.mean(axis=1, keepdims=True)   # (AW, N)
-    y_c  = data - data.mean()                     # (N,)  scalar broadcast
+    y_c  = data - data.mean()                     # (N,) broadcast escalar
 
     sxx = (xx_c ** 2).sum(1)          # (AW,)
     sxz = (xx_c * zz_c).sum(1)       # (AW,)
@@ -182,13 +182,13 @@ def _step1_grid(
     szy = (zz_c * y_c).sum(1)        # (AW,)
 
     det = sxx * szz - sxz ** 2
-    det = np.where(np.abs(det) < 1e-12, 1e-12, det)   # guard singular cases
+    det = np.where(np.abs(det) < 1e-12, 1e-12, det)   # proteger casos singulares
 
-    b     = (szz * sxy - sxz * szy) / det    # cos coefficient
-    g     = (sxx * szy - sxz * sxy) / det    # sin coefficient
+    b     = (szz * sxy - sxz * szy) / det    # coeficiente coseno
+    g     = (sxx * szy - sxz * sxy) / det    # coeficiente seno
     M_est = data.mean() - b * xx.mean(1) - g * zz.mean(1)
 
-    # ── Parameter recovery ───────────────────────────────────────────────
+    # ── Recuperacion de parametros ───────────────────────────────────────
     A_est   = np.sqrt(b ** 2 + g ** 2)
     phi_est = np.arctan2(-g, b)
 
@@ -208,13 +208,13 @@ def _best_step1(
     grid_results: np.ndarray,
 ) -> np.ndarray | None:
     """
-    Select the grid candidate with the lowest RSS that satisfies
-    amplitude stability constraints.
+    Selecciona el candidato de la rejilla con menor RSS que satisfaga
+    las restricciones de estabilidad de amplitud.
 
-    R equivalent: ``bestStep1()``.
-    Stability: M+A ≤ max(data) + 10% range  AND  M−A ≥ min(data) − 10% range.
+    Equivalente en R: ``bestStep1()``.
+    Estabilidad: M+A <= max(datos) + 10% rango  Y  M-A >= min(datos) - 10% rango.
     """
-    order    = np.argsort(grid_results[:, 5])   # sort by RSS
+    order    = np.argsort(grid_results[:, 5])   # ordenar por RSS
     data_min = data.min()
     data_max = data.max()
     slack    = 0.1 * (data_max - data_min)
@@ -235,10 +235,10 @@ def _make_step2_objective(
     omega_max: float,
 ) -> callable:
     """
-    Build a Nelder-Mead objective with precomputed data bounds.
+    Construye la funcion objetivo para Nelder-Mead con limites precalculados.
 
-    Avoids recomputing min/max/slack on every evaluation (called thousands
-    of times per fit).  R equivalent: ``step2FMM()``.
+    Evita recalcular min/max/margen en cada evaluacion (se llama miles de
+    veces por ajuste). Equivalente en R: ``step2FMM()``.
     """
     data_min = data.min()
     data_max = data.max()
@@ -261,29 +261,29 @@ def _make_step2_objective(
 
 
 # ---------------------------------------------------------------------------
-# FMMModel class
+# Clase FMMModel
 # ---------------------------------------------------------------------------
 
 class FMMModel(RhythmModel):
     """
-    Single-component FMM (Flexible Multivariate Model) rhythm fitter.
+    Ajustador ritmico FMM (Flexible Multivariate Model) de un solo componente.
 
-    Fits  y(t) = M + A·cos(β + 2·atan(ω·tan((t − α)/2)))  using a
-    grid-search + Nelder-Mead two-step algorithm.
+    Ajusta  y(t) = M + A*cos(beta + 2*atan(omega*tan((t - alpha)/2)))
+    usando un algoritmo de dos pasos: busqueda en rejilla + Nelder-Mead.
 
-    Parameters
+    Parametros
     ----------
     length_alpha_grid : int
-        Number of α values in the grid.  R default: 48.
+        Numero de valores de alpha en la rejilla. Valor R por defecto: 48.
     length_omega_grid : int
-        Number of ω values in the grid.  R default: 24.
+        Numero de valores de omega en la rejilla. Valor R por defecto: 24.
     omega_max : float
-        Upper bound on ω.  R default: 1.0.
+        Cota superior de omega. Valor R por defecto: 1.0.
     num_reps : int
-        Number of grid-refinement iterations.  R default: 3.
+        Numero de iteraciones de refinamiento de rejilla. Valor R por defecto: 3.
 
-    Examples
-    --------
+    Ejemplo
+    -------
     >>> import numpy as np
     >>> from circust.fitting.fmm import FMMModel
     >>>
@@ -306,7 +306,7 @@ class FMMModel(RhythmModel):
         self.num_reps          = num_reps
 
     # ------------------------------------------------------------------
-    # Public API
+    # API publica
     # ------------------------------------------------------------------
 
     def fit(
@@ -315,24 +315,24 @@ class FMMModel(RhythmModel):
         time_points: np.ndarray,
     ) -> FitResult:
         """
-        Fit the FMM model to ``data``.
+        Ajusta el modelo FMM a ``data``.
 
-        Parameters
+        Parametros
         ----------
-        data : np.ndarray, shape (n_samples,)
-            Observed expression values (normalised to [-1, 1]).
-        time_points : np.ndarray, shape (n_samples,)
-            Circular time axis in [0, 2π), typically ``CPCAResult.circular_scale``.
+        data : np.ndarray, forma (n_muestras,)
+            Valores de expresion observados (normalizados a [-1, 1]).
+        time_points : np.ndarray, forma (n_muestras,)
+            Eje temporal circular en [0, 2*pi), tipicamente ``CPCAResult.circular_scale``.
 
-        Returns
-        -------
+        Devuelve
+        --------
         FitResult
-            ``params`` keys: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
+            Claves de ``params``: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
         """
         data        = np.asarray(data,        dtype=float)
         time_points = np.asarray(time_points, dtype=float)
 
-        # Initial grids (same as R defaults)
+        # Rejillas iniciales (mismos valores que R por defecto)
         alpha_grid = np.linspace(0, 2 * np.pi, self.length_alpha_grid, endpoint=False)
         omega_grid = np.exp(
             np.linspace(
@@ -347,20 +347,20 @@ class FMMModel(RhythmModel):
 
         for rep in range(self.num_reps):
 
-            # ── Step 1: vectorised grid search ───────────────────────────
-            # Evaluates all (α, ω) combinations in a single NumPy pass
-            # (~3× faster than the equivalent Python for-loop).
+            # ── Paso 1: busqueda en rejilla vectorizada ─────────────────
+            # Evalua todas las combinaciones (alpha, omega) en una sola
+            # pasada NumPy (~3x mas rapido que el bucle for equivalente).
             grid_results = _step1_grid(alpha_grid, omega_grid, data, time_points)
 
             prev_best = best_par
             best_par  = _best_step1(data, grid_results)
 
             if best_par is None:
-                # No stable candidate — revert to previous if available
+                # Sin candidato estable — revertir al anterior si existe
                 best_par = prev_best
                 break
 
-            # ── Step 2: Nelder-Mead refinement ───────────────────────────
+            # ── Paso 2: refinamiento Nelder-Mead ────────────────────────
             result = minimize(
                 objective,
                 x0      = best_par[:5],
@@ -369,11 +369,11 @@ class FMMModel(RhythmModel):
             )
             par_final = result.x.copy()
 
-            # Wrap α and β into [0, 2π)
+            # Envolver alpha y beta en [0, 2*pi)
             par_final[2] = par_final[2] % (2 * np.pi)
             par_final[3] = par_final[3] % (2 * np.pi)
 
-            # Narrow grids around current best for next iteration
+            # Estrechar rejillas alrededor del mejor actual para siguiente iteracion
             if rep < self.num_reps - 1:
                 alpha_grid = self._refine_alpha_grid(
                     par_final[2], alpha_grid
@@ -383,12 +383,12 @@ class FMMModel(RhythmModel):
                 )
 
         if best_par is None:
-            # Fallback: flat model
+            # Fallback: modelo plano
             par_final = np.array([data.mean(), 0.0, 0.0, 0.0, 0.5])
-        
+
         M, A, alpha, beta, omega = par_final
 
-        # ── Final fitted values & statistics ────────────────────────────
+        # ── Valores ajustados finales y estadisticos ───────────────────
         fitted        = _fmm_predict(time_points, M, A, alpha, beta, omega)
         residuals     = data - fitted
         residuals_std = self._standardise_residuals(residuals, ddof=5)
@@ -412,7 +412,7 @@ class FMMModel(RhythmModel):
         )
 
     # ------------------------------------------------------------------
-    # Grid refinement helpers
+    # Auxiliares para refinamiento de rejilla
     # ------------------------------------------------------------------
 
     def _refine_alpha_grid(
@@ -421,8 +421,8 @@ class FMMModel(RhythmModel):
         prev_grid: np.ndarray,
     ) -> np.ndarray:
         """
-        Narrow the α grid around ``centre``.
-        R equivalent: the alpha-grid narrowing in the numReps loop.
+        Estrecha la rejilla de alpha alrededor de ``centre``.
+        Equivalente en R: estrechamiento de la rejilla alpha en el bucle numReps.
         """
         amplitude = 1.5 * np.mean(np.diff(np.sort(prev_grid)))
         new_grid  = np.linspace(
@@ -438,8 +438,8 @@ class FMMModel(RhythmModel):
         prev_grid: np.ndarray,
     ) -> np.ndarray:
         """
-        Narrow the ω grid around ``centre``.
-        R equivalent: the omega-grid narrowing in the numReps loop.
+        Estrecha la rejilla de omega alrededor de ``centre``.
+        Equivalente en R: estrechamiento de la rejilla omega en el bucle numReps.
         """
         amplitude = 1.5 * np.mean(np.diff(np.sort(prev_grid)))
         new_grid  = np.linspace(

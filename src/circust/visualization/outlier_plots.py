@@ -1,28 +1,29 @@
 """
 circust/visualization/outlier_plots.py
 ======================================
-Visualisations for the outlier-refinement stage (Stage 1.2).
+Visualizaciones para la etapa de refinamiento de outliers (Etapa 1.2).
 
-Three plot types:
+Tres tipos de gráficos:
 
   plot_core_gene_fits(result)
-      Grid of core-gene expression traces with FMM and Cosinor fit
-      overlays.  Shows the quality of each model on every core gene
-      and the three eigengenes (PC1/PC2/PC3).
-      R equivalent: ``outPar_*.png`` windows in giveMatIniNP_v3_cores.
+      Cuadrícula de trazas de expresión de genes core con ajustes FMM
+      y Cosinor superpuestos.  Muestra la calidad de cada modelo en
+      cada gen core y los tres eigengenes (PC1/PC2/PC3).
+      Equivalente en R: ``outPar_*.png`` en giveMatIniNP_v3_cores.
 
   plot_residual_strips(result)
-      Per-gene horizontal strip chart of standardised FMM residuals
-      with ±3 (multivariate) and ±4 (univariate) threshold lines.
-      Outlier samples are highlighted.
-      R equivalent: ``resOutPar_*.png``.
+      Diagrama de tiras horizontal por gen de residuos FMM
+      estandarizados con líneas umbral de ±3 (multivariante) y
+      ±4 (univariante).  Las muestras outlier se resaltan.
+      Equivalente en R: ``resOutPar_*.png``.
 
   plot_residual_heatmap(result)
-      Heatmap of |standardised FMM residuals| across genes × samples,
-      with colour breaks at the two outlier thresholds.  Gives a
-      bird's-eye view of which samples are problematic across genes.
+      Mapa de calor de |residuos FMM estandarizados| a través de
+      genes × muestras, con cortes de color en los dos umbrales de
+      outliers.  Proporciona una vista global de qué muestras son
+      problemáticas en los distintos genes.
 
-All functions return a matplotlib Figure.  None call plt.show().
+Todas las funciones devuelven una Figure de matplotlib.  Ninguna llama a plt.show().
 """
 import math
 from typing import Optional

@@ -1,23 +1,23 @@
 """
 circust/top_matrix.py
 =====================
-Stage 3.7: Construct the TOP gene expression matrix.
+Etapa 3.7: Construccion de la matriz de expresion TOP.
 
-Combines the 12 core clock genes with the candidate rhythmic genes
-selected in the earlier stages, producing the final matrix used by
-Stage 4 (Robust Estimation).
+Combina los 12 genes reloj centrales con los genes ritmicos candidatos
+seleccionados en las etapas anteriores, produciendo la matriz final
+utilizada por la Etapa 4 (Estimacion Robusta).
 
-The core genes are taken from the full normalised matrix (reordered by
-the synchronised sample ordering), and the candidate genes come from
-the synchronised candidate matrix.  Any artificial/added genes are
-excluded from the candidate list to avoid duplication.
+Los genes centrales se toman de la matriz normalizada completa (reordenada
+segun el orden sincronizado de muestras), y los genes candidatos provienen
+de la matriz de candidatos sincronizada. Los genes artificiales/anadidos
+se excluyen de la lista de candidatos para evitar duplicacion.
 
-R equivalent
-------------
-``obtainTop_v2_cores()`` (lines 113–138 of ``functionGTEX_cores.R``).
-
-Pipeline position
+Equivalente en R
 -----------------
+``obtainTop_v2_cores()`` (lineas 113–138 de ``functionGTEX_cores.R``).
+
+Posicion en el pipeline
+-----------------------
     CandidateSelector → ReferenceSetBuilder → RandomSelector →
     **TopMatrixBuilder** → RobustEstimator
 """
@@ -36,65 +36,65 @@ def build_top_matrix(
     genes_to_exclude:   list[str] | None = None,
 ) -> pd.DataFrame:
     """
-    Build the TOP gene matrix by stacking core genes on top of the
-    candidate set.
+    Construye la matriz TOP de genes apilando los genes centrales sobre
+    el conjunto de candidatos.
 
-    Parameters
+    Parametros
     ----------
-    core_genes : list of str
-        The 12 core clock gene symbols (e.g. ARNTL, DBP, PER1, …).
+    core_genes : list de str
+        Los 12 simbolos de genes reloj centrales (ej. ARNTL, DBP, PER1, …).
 
-    candidate_names : list of str
-        Gene symbols selected by the reference-set / random-selection
-        pipeline.
+    candidate_names : list de str
+        Simbolos de genes seleccionados por el pipeline de conjunto de
+        referencia / seleccion aleatoria.
         R: ``mName``  → ``refSetRefG[[1]]``.
 
-    expr_full_norm : pd.DataFrame, shape (n_all_genes, n_samples)
-        Full normalised expression matrix (genes × samples).
+    expr_full_norm : pd.DataFrame, forma (n_todos_genes, n_muestras)
+        Matriz de expresion normalizada completa (genes × muestras).
         R: ``mFullNorm``  → ``preOrdRefG2[[3]]``.
 
-    candidate_norm_ord : pd.DataFrame, shape (n_candidates, n_samples)
-        Synchronised and normalised candidate expression matrix.
+    candidate_norm_ord : pd.DataFrame, forma (n_candidatos, n_muestras)
+        Matriz de expresion de candidatos sincronizada y normalizada.
         R: ``mMinCandNormOrd``  → ``refSetRefG[[11]]``.
 
-    sample_order : (n_samples,) int array
-        Column indices that reorder ``expr_full_norm`` into the
-        synchronised sample order.
+    sample_order : array int (n_muestras,)
+        Indices de columna que reordenan ``expr_full_norm`` en el
+        orden sincronizado de muestras.
         R: ``indOrd``  → ``refSetRefG[[12]]``.
 
-    genes_to_exclude : list of str or None
-        Artificial / added genes to remove from the candidate list
-        before stacking (avoids duplicates with core genes).
+    genes_to_exclude : list de str o None
+        Genes artificiales/anadidos a eliminar de la lista de candidatos
+        antes de apilar (evita duplicados con genes centrales).
         R: ``genAdd``  → ``refSetRefG[[19]]``.
 
-    Returns
-    -------
-    pd.DataFrame, shape (n_core + n_cand_clean, n_samples)
-        Row-stacked matrix: core genes first, then candidates.
-        Row names = gene symbols.
-        R equivalent: ``top``  → ``topRefG``.
+    Devuelve
+    --------
+    pd.DataFrame, forma (n_core + n_cand_limpios, n_muestras)
+        Matriz apilada por filas: genes centrales primero, luego candidatos.
+        Nombres de filas = simbolos de genes.
+        Equivalente en R: ``top``  → ``topRefG``.
     """
-    # ── Remove excluded genes from candidate list ─────────────────────
+    # ── Eliminar genes excluidos de la lista de candidatos ─────────────
     cand = list(candidate_names)
     if genes_to_exclude:
         for g in genes_to_exclude:
             if g in cand:
                 cand.remove(g)
 
-    # ── Remove core genes that also appear in the candidate list ──────
-    # R: if all core genes are absent from mName → simple stack.
-    #    else → drop overlapping core genes from mName.
+    # ── Eliminar genes centrales que tambien aparecen en candidatos ────
+    # R: si todos los genes centrales estan ausentes de mName → apilar simple.
+    #    si no → eliminar genes centrales solapados de mName.
     overlap = [g for g in core_genes if g in cand]
     for g in overlap:
         cand.remove(g)
 
-    # ── Core gene rows: from full matrix, reordered by sample_order ───
+    # ── Filas de genes centrales: de la matriz completa, reordenadas ───
     core_rows = expr_full_norm.loc[
         [g for g in core_genes if g in expr_full_norm.index]
     ].iloc[:, sample_order]
     core_rows.columns = range(core_rows.shape[1])
 
-    # ── Candidate gene rows: from synchronised matrix ─────────────────
+    # ── Filas de genes candidatos: de la matriz sincronizada ────────────
     cand_present = [g for g in cand if g in candidate_norm_ord.index]
     if len(cand_present) > 0:
         cand_rows = candidate_norm_ord.loc[cand_present].copy()
@@ -104,7 +104,7 @@ def build_top_matrix(
             dtype=float, columns=range(core_rows.shape[1])
         )
 
-    # ── Stack: core on top, candidates below ──────────────────────────
+    # ── Apilar: centrales arriba, candidatos abajo ─────────────────────
     top = pd.concat([core_rows, cand_rows], axis=0)
     top.index = list(core_rows.index) + list(cand_rows.index)
 

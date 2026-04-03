@@ -1,31 +1,31 @@
 """
 circust.visualization
 =====================
-Publication-quality plots for each stage of the CIRCUST pipeline.
+Graficos de calidad para publicacion de cada etapa del pipeline CIRCUST.
 
-Modules
+Modulos
 -------
-cpca_plots        — CPCA stage: PC scatter, gene expression panels
-outlier_plots     — Outlier refinement: gene fits, residual strips, heatmap
-order_plots       — Preliminary ordering: circular peaks, profiles, R² bars
-pipeline_summary  — Composite summary, scree plot, expression heatmap
+cpca_plots        — Etapa CPCA: scatter PC, paneles de expresion genica
+outlier_plots     — Refinamiento de outliers: ajustes genicos, strips de residuos, heatmap
+order_plots       — Ordenamiento preliminar: picos circulares, perfiles, barras R²
+pipeline_summary  — Resumen compuesto, scree plot, heatmap de expresion
 
-Quick reference
----------------
+Referencia rapida
+------------------
     from circust.visualization import (
-        # CPCA (Stage 1.1)
+        # CPCA (Etapa 1.1)
         plot_pc_scatter,
         plot_gene_panels,
-        # Outlier refinement (Stage 1.2)
+        # Refinamiento de outliers (Etapa 1.2)
         plot_core_gene_fits,
         plot_residual_strips,
         plot_residual_heatmap,
-        # Preliminary ordering (Stage 2)
+        # Ordenamiento preliminar (Etapa 2)
         plot_circular_peaks,
         plot_ordered_profiles,
         plot_r2_comparison,
         plot_day_night_diagram,
-        # Pipeline summary
+        # Resumen del pipeline
         plot_pipeline_summary,
         plot_variance_explained,
         plot_expression_overview,

@@ -1,19 +1,19 @@
-# preprocessing.py  ── loader section
+# preprocessing.py  ── seccion de carga y preprocesamiento
 import pathlib
 from typing import Optional
 from dataclasses import dataclass, field
-from circust.constants import ZERO_COUNT_THRESHOLD,NORM_MIN,NORM_MAX
+from circust.constants import ZERO_COUNT_THRESHOLD, NORM_MIN, NORM_MAX
 from scipy.stats import median_abs_deviation
 
 import pandas as pd
 import numpy as np
 
 
-# ── supported formats ──────────────────────────────────────────────────────
+# ── formatos soportados ───────────────────────────────────────────────────
 _LOADERS = {
     ".csv":  "csv",
     ".tsv":  "tsv",
-    ".txt":  "tsv",   # assume tab-separated when .txt
+    ".txt":  "tsv",       # se asume separado por tabuladores cuando .txt
     ".xlsx": "excel",
     ".xls":  "excel",
     ".parquet": "parquet",
@@ -26,57 +26,56 @@ def load_expression_matrix(
     chunk_size: Optional[int] = None,
 ) -> pd.DataFrame:
     """
-    Load a gene expression matrix from disk into a pandas DataFrame.
+    Carga una matriz de expresion genica desde disco en un DataFrame de pandas.
 
-    Expected shape after loading
+    Forma esperada tras la carga
     ----------------------------
-    - Rows    = genes  (row index = gene symbols, e.g. "ARNTL", "PER1")
-    - Columns = samples (each column = one individual/sample)
-    - Values  = raw expression counts (float); zeros and NaN are allowed
+    - Filas    = genes  (indice de fila = simbolos genicos, ej. "ARNTL", "PER1")
+    - Columnas = muestras (cada columna = un individuo/muestra)
+    - Valores  = conteos de expresion brutos (float); ceros y NaN permitidos
 
-    Supported formats
-    -----------------
-    .csv            Comma-separated values
-    .tsv / .txt     Tab-separated values
-    .xlsx / .xls    Excel workbook (first sheet is read)
-    .parquet        Apache Parquet — recommended for large datasets
+    Formatos soportados
+    -------------------
+    .csv            Valores separados por comas
+    .tsv / .txt     Valores separados por tabuladores
+    .xlsx / .xls    Libro Excel (se lee la primera hoja)
+    .parquet        Apache Parquet — recomendado para conjuntos grandes
 
-    Parameters
+    Parametros
     ----------
     path : str
-        Path to the file. The format is detected from the file extension.
+        Ruta al archivo. El formato se detecta por la extension.
 
-    gene_column : str, optional
-        Name of the column that contains gene symbols.
-        Pass a name explicitly if your file has a non-standard layout,
-        e.g. gene_column="gene_id".
+    gene_column : str, opcional
+        Nombre de la columna que contiene los simbolos genicos.
+        Especificar explicitamente si el archivo tiene un layout no estandar,
+        ej. gene_column="gene_id".
 
-    chunk_size : int, optional
-        Only used for .parquet files. Number of row-groups to read at a
-        time. Useful when the file is larger than available RAM.
-        If None (default), the entire file is loaded at once.
-        Ignored for CSV/TSV/Excel — those formats do not support efficient
-        chunked reading in a way that is meaningful for this use case.
+    chunk_size : int, opcional
+        Solo para archivos .parquet. Numero de row-groups a leer por vez.
+        Util cuando el archivo es mas grande que la RAM disponible.
+        Si None (defecto), se carga el archivo completo de una vez.
+        Ignorado para CSV/TSV/Excel.
 
-    Returns
-    -------
-    pd.DataFrame
-        Matrix with gene symbols as the row index (index.name = "gene_symbol")
-        and sample IDs as column names. All values are float64. Cells that
-        could not be parsed as numbers are set to NaN.
-
-    Raises
-    ------
-    FileNotFoundError
-        If no file exists at ``path``.
-    ValueError
-        If the file extension is not in the supported list.
-    ImportError
-        If reading a .parquet file and pyarrow is not installed.
-
-    Examples
+    Devuelve
     --------
-    Load a standard CSV:
+    pd.DataFrame
+        Matriz con simbolos genicos como indice de fila (index.name = "gene_symbol")
+        e IDs de muestra como nombres de columna. Todos los valores son float64.
+        Celdas que no se pudieron parsear como numeros se establecen a NaN.
+
+    Excepciones
+    -----------
+    FileNotFoundError
+        Si no existe archivo en ``path``.
+    ValueError
+        Si la extension del archivo no esta en la lista soportada.
+    ImportError
+        Si se lee un .parquet y pyarrow no esta instalado.
+
+    Ejemplo
+    -------
+    Cargar un CSV estandar:
 
     >>> df = load_expression_matrix("data/raw/gtex_brain.csv")
     >>> df.shape
@@ -84,7 +83,7 @@ def load_expression_matrix(
     >>> df.index[:3].tolist()
     ['ARNTL', 'PER1', 'CRY1']
 
-    Load a large parquet file with chunked reading:
+    Cargar un parquet grande con lectura por bloques:
 
     >>> df = load_expression_matrix(
     ...     "data/raw/gtex_brain.parquet",
@@ -93,43 +92,43 @@ def load_expression_matrix(
     """
     file_path = pathlib.Path(path)
 
-    # ── existence check ────────────────────────────────────────────────────
+    # ── verificacion de existencia ────────────────────────────────────────
     if not file_path.exists():
         raise FileNotFoundError(
-            f"Expression matrix file not found: '{path}'\n"
-            f"Check the path and make sure the file is in the data/raw/ folder."
+            f"Archivo de matriz de expresion no encontrado: '{path}'\n"
+            f"Verifica la ruta y asegurate de que el archivo esta en la carpeta data/raw/."
         )
 
-    # ── format detection ───────────────────────────────────────────────────
+    # ── deteccion de formato ──────────────────────────────────────────────
     extension = file_path.suffix.lower()
     fmt = _LOADERS.get(extension)
 
     if fmt is None:
         supported = ", ".join(_LOADERS.keys())
         raise ValueError(
-            f"Unsupported file format: '{extension}'\n"
-            f"Supported formats: {supported}"
+            f"Formato de archivo no soportado: '{extension}'\n"
+            f"Formatos soportados: {supported}"
         )
 
-    # ── which column becomes the row index? ───────────────────────────────
-    # index_col=0 means "use the first column as the row index"
-    # This is the standard layout: first column = gene names,
-    # remaining columns = samples.
-    # If the caller knows their gene column by name, use that instead.
+    # ── que columna se convierte en el indice de fila? ────────────────────
+    # index_col=0 significa "usar la primera columna como indice de fila"
+    # Layout estandar: primera columna = nombres de genes,
+    # columnas restantes = muestras.
+    # Si el usuario conoce su columna de genes por nombre, usar esa.
     if fmt in ("csv", "tsv", "excel"):
         index_col = gene_column if gene_column is not None else 0
     elif fmt == "parquet":
         if gene_column is None:
             raise ValueError(
                 "Para archivos Parquet debes especificar el nombre de la columna "
-                "que contiene los identificadores de genes mediante el parámetro 'gene_column'."
+                "que contiene los identificadores de genes mediante el parametro 'gene_column'."
             )
         index_col = gene_column
     else:
-        # no debería ocurrir porque ya validamos fmt
+        # no deberia ocurrir porque ya validamos fmt
         index_col = None
 
-    # ── loading ────────────────────────────────────────────────────────────
+    # ── carga ─────────────────────────────────────────────────────────────
     if fmt == "csv":
         matrix = pd.read_csv(file_path, index_col=index_col)
 
@@ -143,13 +142,13 @@ def load_expression_matrix(
         matrix = _load_parquet(file_path, index_col=index_col,
                                chunk_size=chunk_size)
 
-    # ── enforce numeric values ─────────────────────────────────────────────
-    # Some Excel files or poorly formatted CSVs contain stray strings.
-    # errors="coerce" turns those into NaN instead of crashing.
-    # Parquet files are already typed so this is a no-op for them.
+    # ── forzar valores numericos ──────────────────────────────────────────
+    # Algunos Excel o CSV mal formateados contienen cadenas sueltas.
+    # errors="coerce" las convierte en NaN en lugar de fallar.
+    # Los archivos Parquet ya estan tipados asi que esto es un no-op para ellos.
     matrix = matrix.apply(pd.to_numeric, errors="coerce")
 
-    # ── name the index ─────────────────────────────────────────────────────
+    # ── nombrar el indice ─────────────────────────────────────────────────
     matrix.index.name = "gene_symbol"
 
     return matrix
@@ -164,14 +163,14 @@ def _load_parquet(
         import pyarrow.parquet as pq
     except ImportError:
         raise ImportError(
-            "Reading parquet files requires pyarrow.\n"
-            "Install it with:  pip install pyarrow"
+            "Leer archivos parquet requiere pyarrow.\n"
+            "Instalalo con:  pip install pyarrow"
         )
 
     parquet_file = pq.ParquetFile(file_path)
 
     if chunk_size is None:
-        # Use pandas directly — it correctly restores the saved index
+        # Usar pandas directamente — restaura correctamente el indice guardado
         matrix = pd.read_parquet(file_path)
     else:
         chunks = []
@@ -179,8 +178,8 @@ def _load_parquet(
             chunks.append(batch.to_pandas())
         matrix = pd.concat(chunks, ignore_index=False)
 
-    # Only set index manually if it wasn't restored automatically
-    # (i.e. the file was written WITHOUT a named index)
+    # Solo establecer indice manualmente si no se restauro automaticamente
+    # (es decir, el archivo se escribio SIN un indice con nombre)
     if matrix.index.name != "gene_symbol":
         if isinstance(index_col, str) and index_col in matrix.columns:
             matrix = matrix.set_index(index_col)
@@ -193,36 +192,36 @@ def _load_parquet(
 @dataclass
 class PreprocessingResult:
     """
-    All outputs produced by :class: Preprocessor.
+    Todos los resultados producidos por :class:`Preprocessor`.
 
-    Having named fields instead of a positional list (like R's [[1]], [[3]])
-    makes every downstream module self-documenting and protects against
-    accidentally using the wrong value.
+    Tener campos con nombre en lugar de una lista posicional (como [[1]], [[3]] de R)
+    hace que cada modulo aguas abajo sea autodocumentado y protege contra
+    usar accidentalmente el valor equivocado.
 
-    Attributes
-    ----------
+    Atributos
+    ---------
     expr_norm : pd.DataFrame
-        Normalised expression matrix, genes x samples, values in [-1, 1].
-        This is the matrix every downstream step (CPCA, FMM) will consume.
+        Matriz de expresion normalizada, genes x muestras, valores en [-1, 1].
+        Es la matriz que consume cada paso aguas abajo (CPCA, FMM).
 
     expr_raw : pd.DataFrame
-        Filtered raw matrix — after removing bad genes but before
-        normalisation. Useful for debugging and validation.
+        Matriz bruta filtrada — despues de eliminar genes malos pero antes
+        de normalizar. Util para depuracion y validacion.
 
     dropped_sparse : List[str]
-        Gene symbols removed because > constants.ZERO_COUNT_THRESHOLD of samples were zero or NaN.
+        Simbolos genicos eliminados porque > ZERO_COUNT_THRESHOLD de muestras eran cero o NaN.
 
     dropped_duplicates : List[str]
-        Gene symbols removed during duplicate resolution (lower-MAD rows).
+        Simbolos genicos eliminados durante la resolucion de duplicados (filas con menor MAD).
 
     n_genes_in : int
-        Number of genes that entered the preprocessor.
+        Numero de genes que entraron al preprocesador.
 
     n_genes_out : int
-        Number of genes that survived all filtering steps.
+        Numero de genes que sobrevivieron a todos los pasos de filtrado.
 
     n_samples : int
-        Number of samples. Never changes during preprocessing.
+        Numero de muestras. No cambia nunca durante el preprocesamiento.
     """
 
     expr_norm:           pd.DataFrame
@@ -234,64 +233,58 @@ class PreprocessingResult:
     n_samples:           int = 0
 
     def summary(self) -> str:
-        """
-        Return a human-readable summary of what happened during preprocessing.
-        Mirrors the print statements in the original R function.
-        """
+        """Devuelve un resumen legible de lo ocurrido durante el preprocesamiento."""
         lines = [
-            "=== Preprocessing Summary ===",
-            f"  Genes input          : {self.n_genes_in}",
-            f"  Genes output         : {self.n_genes_out}",
-            f"  Samples              : {self.n_samples}",
-            f"  Dropped (sparse)     : {len(self.dropped_sparse)}",
-            f"  Dropped (duplicates) : {len(self.dropped_duplicates)}",
+            "=== Resumen del Preprocesamiento ===",
+            f"  Genes entrada        : {self.n_genes_in}",
+            f"  Genes salida         : {self.n_genes_out}",
+            f"  Muestras             : {self.n_samples}",
+            f"  Eliminados (sparse)  : {len(self.dropped_sparse)}",
+            f"  Eliminados (duplicados): {len(self.dropped_duplicates)}",
         ]
         if self.dropped_sparse:
             shown = self.dropped_sparse[:5]
-            tail  = f" … (+{len(self.dropped_sparse)-5} more)" if len(self.dropped_sparse) > 5 else ""
-            lines.append(f"    sparse genes       : {shown}{tail}")
+            tail  = f" ... (+{len(self.dropped_sparse)-5} mas)" if len(self.dropped_sparse) > 5 else ""
+            lines.append(f"    genes sparse       : {shown}{tail}")
         if self.dropped_duplicates:
             unique_dupes = sorted(set(self.dropped_duplicates))[:5]
-            tail = f" … (+{len(set(self.dropped_duplicates))-5} more)" if len(set(self.dropped_duplicates)) > 5 else ""
-            lines.append(f"    duplicate genes    : {unique_dupes}{tail}")
+            tail = f" ... (+{len(set(self.dropped_duplicates))-5} mas)" if len(set(self.dropped_duplicates)) > 5 else ""
+            lines.append(f"    genes duplicados   : {unique_dupes}{tail}")
         return "\n".join(lines)
-    
+
+
 class Preprocessor:
     """
-    Clean and normalise a raw gene-expression matrix.
+    Limpia y normaliza una matriz de expresion genica bruta.
 
-    Replicates R's ``giveMatIniNP_v3_cores`` preprocessing steps:
+    Replica los pasos de preprocesamiento de ``giveMatIniNP_v3_cores`` de R:
 
-    1. Drop genes with no name (NA rownames in R)
-    2. Drop sparse genes (> ``sparse_threshold`` of samples are zero OR NaN)
-    3. Resolve duplicate gene names — keep the row with the highest MAD
-    4. Normalise each gene to [−1, 1]
+    1. Eliminar genes sin nombre (NA rownames en R)
+    2. Eliminar genes sparse (> ``sparse_threshold`` de muestras son cero O NaN)
+    3. Resolver nombres de genes duplicados — conservar la fila con mayor MAD
+    4. Normalizar cada gen a [-1, 1]
 
-    Parameters
+    Parametros
     ----------
     sparse_threshold : float
-        Fraction of samples that may be zero or NaN before a gene is
-        dropped.  The comparison is strict (>), so a gene at exactly the
-        threshold fraction is kept.
-        R default: 0.30 (line 3920-3921 of ``giveMatIniNP_v3_cores``).
+        Fraccion de muestras que pueden ser cero o NaN antes de que un gen
+        se elimine. La comparacion es estricta (>), asi que un gen
+        exactamente en el umbral se conserva.
+        Valor R por defecto: 0.30 (linea 3920-3921 de ``giveMatIniNP_v3_cores``).
 
-        Note: R applies the **same** threshold to both zeros and NaNs.
-        If you need to treat them differently, use ``zero_threshold`` and
-        ``nan_threshold`` separately (non-R extension).
+    zero_threshold : float o None
+        Override para el umbral solo de ceros. Si None (defecto), usa
+        ``sparse_threshold`` para ceros, replicando el comportamiento de R.
 
-    zero_threshold : float or None
-        Override for the zeros-only threshold.  If None (default), uses
-        ``sparse_threshold`` for zeros, matching R behaviour exactly.
-
-    nan_threshold : float or None
-        Override for the NaN-only threshold.  If None (default), uses
-        ``sparse_threshold`` for NaNs, matching R behaviour exactly.
+    nan_threshold : float o None
+        Override para el umbral solo de NaN. Si None (defecto), usa
+        ``sparse_threshold`` para NaN, replicando el comportamiento de R.
 
     verbose : bool
-        If True, print a progress message after each step.
+        Si True, imprime mensajes de progreso tras cada paso.
 
-    Examples
-    --------
+    Ejemplo
+    -------
     >>> import pandas as pd
     >>> import numpy as np
     >>>
@@ -318,47 +311,47 @@ class Preprocessor:
 
         if not 0.0 < sparse_threshold < 1.0:
             raise ValueError(
-                f"sparse_threshold must be between 0 and 1, got {sparse_threshold}"
+                f"sparse_threshold debe estar entre 0 y 1, se recibio {sparse_threshold}"
             )
 
         self.sparse_threshold = sparse_threshold
-        # If caller provides specific overrides use them; otherwise fall back
-        # to sparse_threshold — matching R's single-threshold behaviour.
+        # Si el usuario proporciona overrides especificos usarlos; si no, caer
+        # a sparse_threshold — replicando el comportamiento de umbral unico de R.
         self.zero_threshold = zero_threshold if zero_threshold is not None else sparse_threshold
         self.nan_threshold  = nan_threshold  if nan_threshold  is not None else sparse_threshold
         self.verbose = verbose
 
-    def run(self,matrix:pd.DataFrame) -> PreprocessingResult:
+    def run(self, matrix: pd.DataFrame) -> PreprocessingResult:
         """
-        Execute all four preprocessing steps in order.
+        Ejecuta los cuatro pasos de preprocesamiento en orden.
 
-        Parameters
+        Parametros
         ----------
         matrix : pd.DataFrame
-            Raw expression matrix loaded by ``load_expression_matrix()``.
-            Rows = genes, columns = samples. May contain zeros and NaN.
+            Matriz de expresion bruta cargada por ``load_expression_matrix()``.
+            Filas = genes, columnas = muestras. Puede contener ceros y NaN.
 
-        Returns
-        -------
+        Devuelve
+        --------
         PreprocessingResult
         """
 
         if matrix.empty:
-            raise ValueError("Input matrix is empty.")
-        
-        n_genes_in, n_samples = matrix.shape
-        self._log(f"Input matrix: {n_genes_in} genes × {n_samples} samples")
+            raise ValueError("La matriz de entrada esta vacia.")
 
-        # step 1 — remove genes with no name
+        n_genes_in, n_samples = matrix.shape
+        self._log(f"Matriz de entrada: {n_genes_in} genes x {n_samples} muestras")
+
+        # paso 1 — eliminar genes sin nombre
         mat = self._drop_unnamed(matrix)
 
-        # step 2 — remove sparse genes
+        # paso 2 — eliminar genes sparse
         mat, dropped_sparse = self._drop_sparse(mat)
 
-        # step 3 — resolve duplicate gene names
+        # paso 3 — resolver nombres de genes duplicados
         mat, dropped_duplicates = self._resolve_duplicates(mat)
 
-        # step 4 — normalise each gene to [−1, 1]
+        # paso 4 — normalizar cada gen a [-1, 1]
         expr_norm = self._normalise(mat)
 
         result = PreprocessingResult(
@@ -373,122 +366,122 @@ class Preprocessor:
 
         self._log(result.summary())
         return result
-    
+
     def _drop_unnamed(self, mat: pd.DataFrame) -> pd.DataFrame:
         """
-        Remove rows whose gene symbol is missing or effectively empty.
+        Elimina filas cuyo simbolo genico falta o esta efectivamente vacio.
 
-        Matches R's ``which(is.na(rownames(...)))`` (line 3914) and extends
-        it to catch edge cases that arise when loading from CSV/Excel:
+        Replica ``which(is.na(rownames(...)))`` de R (linea 3914) y extiende
+        para capturar casos borde al cargar desde CSV/Excel:
 
-        - Real NaN in the index  (R: NA rowname)
-        - Empty string ``""``
-        - Whitespace-only string ``"   "``
-        - The literal string ``"nan"`` (happens when NaN is cast to str)
+        - NaN real en el indice (R: NA rowname)
+        - Cadena vacia ``""``
+        - Cadena de solo espacios ``"   "``
+        - La cadena literal ``"nan"`` (ocurre cuando NaN se convierte a str)
         """
         index_str = mat.index.astype(str)
         is_invalid = (
-            mat.index.isna()                          # real NaN
-            | (index_str.str.strip() == "")           # blank / whitespace-only
-            | (index_str.str.lower() == "nan")        # stringified NaN
+            mat.index.isna()                          # NaN real
+            | (index_str.str.strip() == "")           # vacio / solo espacios
+            | (index_str.str.lower() == "nan")        # NaN convertido a cadena
         )
 
         n_bad = int(is_invalid.sum())
         if n_bad > 0:
-            self._log(f"  Step 1 — dropped {n_bad} gene(s) with no name")
+            self._log(f"  Paso 1 — eliminados {n_bad} gen(es) sin nombre")
         else:
-            self._log("  Step 1 — no unnamed genes found")
+            self._log("  Paso 1 — no se encontraron genes sin nombre")
 
         return mat.loc[~is_invalid]
 
     def _drop_sparse(self, mat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         """
-        Remove genes where more than zero_threshold of samples are zero OR NaN.
+        Elimina genes donde mas de zero_threshold de muestras son cero O NaN.
 
-        Note: the condition is strictly > so a gene at exactly 30% is kept.
-        This is preserved here: (frac > threshold), not (frac >= threshold).
+        Nota: la condicion es estrictamente > asi que un gen exactamente en el
+        30% se conserva. Preservado aqui: (frac > threshold), no (frac >= threshold).
         """
         n_samples = mat.shape[1]
 
-        # fraction of zeros and NaN per gene (row-wise)
+        # fraccion de ceros y NaN por gen (por fila)
         zero_frac = (mat == 0).sum(axis=1) / n_samples
         nan_frac  = mat.isna().sum(axis=1)  / n_samples
 
-        is_sparse = (zero_frac > self.zero_threshold) | (nan_frac  > self.nan_threshold)
+        is_sparse = (zero_frac > self.zero_threshold) | (nan_frac > self.nan_threshold)
 
         dropped = mat.index[is_sparse].tolist()
 
-        # mirror the exact R print statement (line 3925)
+        # replica el print exacto de R (linea 3925)
         self._log(
-            f"  Step 2 — dropped {len(dropped)} gene(s) with more than "
-            f"{int(self.zero_threshold * 100)}% zeros or NaN"
+            f"  Paso 2 — eliminados {len(dropped)} gen(es) con mas del "
+            f"{int(self.zero_threshold * 100)}% de ceros o NaN"
         )
 
         return mat.loc[~is_sparse].copy(), dropped
-    
+
     def _resolve_duplicates(self, mat: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         """
-        For each gene name that appears more than once, keep the row
-        with the highest MAD and discard the rest.
+        Para cada nombre de gen que aparece mas de una vez, conserva la fila
+        con mayor MAD y descarta el resto.
 
-        MAD note:
-            R's mad(x, constant=1) = median(|x - median(x)|) with NO
-            normal-distribution correction factor.
-            Python equivalent: median_abs_deviation(x, scale=1)
-            from scipy.stats — the scale=1 argument is critical.
+        Nota sobre MAD:
+            R: mad(x, constant=1) = median(|x - median(x)|) SIN factor de
+            correccion de distribucion normal.
+            Python equivalente: median_abs_deviation(x, scale=1)
+            de scipy.stats — el argumento scale=1 es critico.
         """
-        # find gene names that appear more than once
+        # encontrar nombres de genes que aparecen mas de una vez
         duplicated_mask  = mat.index.duplicated(keep=False)
         duplicated_names = mat.index[duplicated_mask].unique().tolist()
 
         if not duplicated_names:
-            self._log("  Step 3 — no duplicate gene names found")
+            self._log("  Paso 3 — no se encontraron nombres de genes duplicados")
             return mat, []
 
         self._log(
-            f"  Step 3 — resolving {len(duplicated_names)} "
-            f"duplicated gene name(s)"
+            f"  Paso 3 — resolviendo {len(duplicated_names)} "
+            f"nombre(s) de gen duplicado(s)"
         )
 
-        # collect integer positions of rows to drop
+        # recopilar posiciones enteras de filas a eliminar
         rows_to_drop:  list[int] = []
         dropped_names: list[str] = []
 
         for gene in duplicated_names:
-            # np.where gives integer positions — needed because two rows
-            # share the same label so .loc would return both
+            # np.where da posiciones enteras — necesario porque dos filas
+            # comparten la misma etiqueta, asi que .loc devolveria ambas
             positions = np.where(mat.index == gene)[0]
 
-            # compute MAD for each duplicate row using scale=1 to match R
+            # calcular MAD para cada fila duplicada usando scale=1 para replicar R
             mads = np.array([
                 float(median_abs_deviation(mat.iloc[pos].values, scale=1))
                 for pos in positions
             ])
 
-            # keep the row with the highest MAD, drop the rest
+            # conservar la fila con mayor MAD, eliminar el resto
             best_position   = positions[int(np.argmax(mads))]
             loser_positions = [p for p in positions if p != best_position]
 
             rows_to_drop.extend(loser_positions)
             dropped_names.extend([gene] * len(loser_positions))
 
-        # build a boolean keep-mask and apply it
+        # construir mascara booleana de conservacion y aplicar
         keep_mask = np.ones(len(mat), dtype=bool)
         keep_mask[rows_to_drop] = False
 
         return mat.iloc[keep_mask].copy(), dropped_names
-    
+
     def _normalise(self, mat: pd.DataFrame) -> pd.DataFrame:
         """
-        Scale every gene independently to the interval [NORM_MIN, NORM_MAX] using
-        min-max normalisation.
+        Escala cada gen independientemente al intervalo [NORM_MIN, NORM_MAX]
+        usando normalizacion min-max.
 
-        Edge case — constant gene (min == max):
-            R's normalice() divides by zero silently (returns NaN/Inf).
-            R's safer variant normalice2() returns all zeros for this case.
-            We follow normalice2() behaviour: constant genes → all zeros.
-            This is the correct biological choice — a gene with no variance
-            carries no information for ordering.
+        Caso borde — gen constante (min == max):
+            normalice() de R divide por cero silenciosamente (devuelve NaN/Inf).
+            La variante mas segura normalice2() de R devuelve todos ceros.
+            Seguimos el comportamiento de normalice2(): genes constantes -> todos ceros.
+            Esta es la eleccion biologica correcta — un gen sin varianza
+            no aporta informacion para el ordenamiento.
         """
         values = mat.values.astype(float)
 
@@ -496,11 +489,11 @@ class Preprocessor:
         row_max = values.max(axis=1, keepdims=True)
         span    = row_max - row_min
 
-        # avoid division by zero for constant genes.
-        # We use np.errstate to suppress the numpy RuntimeWarning:
-        # np.where() evaluates BOTH branches before choosing, so the
-        # division still happens on zero-span rows — but the result is
-        # discarded. errstate tells numpy not to warn about that.
+        # evitar division por cero para genes constantes.
+        # Usamos np.errstate para suprimir el RuntimeWarning de numpy:
+        # np.where() evalua AMBAS ramas antes de elegir, asi que la
+        # division ocurre en filas con span cero — pero el resultado se
+        # descarta. errstate le dice a numpy que no avise.
         with np.errstate(invalid="ignore", divide="ignore"):
             normalised = np.where(
                 span == 0,
@@ -511,10 +504,10 @@ class Preprocessor:
         return pd.DataFrame(normalised, index=mat.index, columns=mat.columns)
 
     # -----------------------------------------------------------------------
-    # Utility
+    # Utilidades
     # -----------------------------------------------------------------------
 
     def _log(self, message: str) -> None:
-        """Print only when verbose=True."""
+        """Imprime solo cuando verbose=True."""
         if self.verbose:
-          print(message)
+            print(message)

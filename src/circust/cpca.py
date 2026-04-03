@@ -1,103 +1,107 @@
 """
-What is CPCA?
--------------
-Standard PCA on a gene-expression matrix gives principal components that
-explain linear variance. CPCA goes one step further: it takes the loadings
-of PC1 and PC2 — one value per sample — and treats them as (x, y)
-coordinates on a 2-D plane. Each sample gets projected onto the unit circle
-via an angle:
+circust/cpca.py
+===============
+Analisis de Componentes Principales Circular (CPCA).
 
-    phi = atan2(PC2_loading, PC1_loading)   in [0, 2*pi)
+Que es CPCA?
+------------
+El PCA estandar sobre una matriz de expresion genica da componentes principales
+que explican varianza lineal. CPCA va un paso mas alla: toma los loadings de
+PC1 y PC2 — un valor por muestra — y los trata como coordenadas (x, y) en
+un plano 2D. Cada muestra se proyecta sobre el circulo unitario mediante
+un angulo:
 
-Sorting samples by phi gives a *circular* ordering that reflects the
-underlying circadian rhythm. Samples near the origin (small distance from
-(0,0) in PC1-PC2 space) are potential outliers because they do not
-participate strongly in the dominant oscillation.
+    phi = atan2(PC2_loading, PC1_loading)   en [0, 2*pi)
 
-Pipeline position
------------------
-    preprocessing.py  →  cpca.py  →  outlier_detection.py  →  ...
+Ordenar las muestras por phi da un *ordenamiento circular* que refleja el
+ritmo circadiano subyacente. Las muestras cercanas al origen (pequena
+distancia desde (0,0) en el espacio PC1-PC2) son outliers potenciales
+porque no participan fuertemente en la oscilacion dominante.
 
-Input:  PreprocessingResult.expr_norm  (full normalised matrix)
-Output: CPCAResult                     (sample order + outlier flags)
+Posicion en el pipeline
+-----------------------
+    preprocessing.py  ->  cpca.py  ->  outlier.py  ->  ...
+
+Entrada: PreprocessingResult.expr_norm  (matriz normalizada completa)
+Salida:  CPCAResult                     (orden de muestras + flags de outliers)
 """
 
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-from circust.constants import SEED_GENES_DEFAULT,OUTLIER_RADIAL_THRESHOLD,OUTLIER_RADIAL_THRESHOLD_LOOSE,N_OUTLIER_CANDIDATES
+from circust.constants import SEED_GENES_DEFAULT, OUTLIER_RADIAL_THRESHOLD, OUTLIER_RADIAL_THRESHOLD_LOOSE, N_OUTLIER_CANDIDATES
 
 # ===========================================================================
-# Result dataclass
+# Dataclass de resultados
 # ===========================================================================
 
 @dataclass
 class CPCAResult:
     """
-    All outputs produced by :class:`CPCA`.
+    Todos los resultados producidos por :class:`CPCA`.
 
-    Attributes
-    ----------
-    sample_order : np.ndarray of int, shape (n_samples,)
-        Integer indices that sort samples by their circular phase phi.
-        Apply this to any matrix column axis to get the CPCA ordering.
-        R equivalent: ``orderCPCA8``  (obtainCPCA13 line 3816).
+    Atributos
+    ---------
+    sample_order : np.ndarray de int, forma (n_muestras,)
+        Indices enteros que ordenan las muestras por su fase circular phi.
+        Aplicar a cualquier eje de columnas de matriz para obtener el orden CPCA.
+        Equivalente en R: ``orderCPCA8`` (obtainCPCA13 linea 3816).
 
-    circular_scale : np.ndarray of float, shape (n_samples,)
-        The sorted phi values in [0, 2*pi). This is the circular time
-        axis used by all downstream fitting steps.
-        R equivalent: ``escalaPhi8``  (obtainCPCA13 line 3817).
+    circular_scale : np.ndarray de float, forma (n_muestras,)
+        Valores de phi ordenados en [0, 2*pi). Es el eje temporal circular
+        usado por todos los pasos de ajuste posteriores.
+        Equivalente en R: ``escalaPhi8`` (obtainCPCA13 linea 3817).
 
-    pc1 : np.ndarray of float, shape (n_samples,)
-        PC1 loadings — one value per sample.
-        R equivalent: ``eigen18 = cp8$rotation[,1]``  (line 3810).
+    pc1 : np.ndarray de float, forma (n_muestras,)
+        Loadings de PC1 — un valor por muestra.
+        Equivalente en R: ``eigen18 = cp8$rotation[,1]`` (linea 3810).
 
-    pc2 : np.ndarray of float, shape (n_samples,)
-        PC2 loadings — one value per sample.
-        R equivalent: ``eigen28 = cp8$rotation[,2]``  (line 3811).
+    pc2 : np.ndarray de float, forma (n_muestras,)
+        Loadings de PC2 — un valor por muestra.
+        Equivalente en R: ``eigen28 = cp8$rotation[,2]`` (linea 3811).
 
-    pc3 : np.ndarray of float, shape (n_samples,)
-        PC3 loadings — one value per sample.
-        R equivalent: ``eigen38 = cp8$rotation[,3]``  (line 3812).
+    pc3 : np.ndarray de float, forma (n_muestras,)
+        Loadings de PC3 — un valor por muestra.
+        Equivalente en R: ``eigen38 = cp8$rotation[,3]`` (linea 3812).
 
-    variance_explained : np.ndarray of float, shape (3,)
-        Fraction of total variance explained by PC1, PC2, PC3.
-        R equivalent: ``varPer8``  (lines 3807-3809).
+    variance_explained : np.ndarray de float, forma (3,)
+        Fraccion de varianza total explicada por PC1, PC2, PC3.
+        Equivalente en R: ``varPer8`` (lineas 3807-3809).
 
-    outlier_candidate_idx : np.ndarray of int
-        Column indices (in the ORIGINAL matrix) of the N_OUTLIER_CANDIDATES
-        samples with the smallest PC1-PC2 distance from the origin.
-        R equivalent: ``obs8 = order(d8)[1:nOuts]``  (line 3824).
+    outlier_candidate_idx : np.ndarray de int
+        Indices de columna (en la matriz ORIGINAL) de las N_OUTLIER_CANDIDATES
+        muestras con menor distancia PC1-PC2 al origen.
+        Equivalente en R: ``obs8 = order(d8)[1:nOuts]`` (linea 3824).
 
-    outlier_idx : np.ndarray of int
-        Subset of outlier_candidate_idx that actually fall inside the
-        tight (<=0.10) or loose (<=0.15) radius.
-        R equivalent: the indices collected in the s8 loop (lines 3831-3846).
+    outlier_idx : np.ndarray de int
+        Subconjunto de outlier_candidate_idx que realmente caen dentro del
+        radio tight (<=0.10) o loose (<=0.15).
+        Equivalente en R: los indices recopilados en el bucle s8 (lineas 3831-3846).
 
-    outlier_positions_in_order : np.ndarray of int
-        Position of each outlier within ``sample_order`` (not in the
-        original matrix). Used by downstream residual plots.
-        R equivalent: ``outs = match(obs8[1:ss8], orderCPCA8)`` (line 3872).
+    outlier_positions_in_order : np.ndarray de int
+        Posicion de cada outlier dentro de ``sample_order`` (no en la
+        matriz original). Usado por graficos de residuos posteriores.
+        Equivalente en R: ``outs = match(obs8[1:ss8], orderCPCA8)`` (linea 3872).
 
     n_outliers : int
-        Number of confirmed outliers (= len(outlier_idx)).
-        R equivalent: ``ss8``  (line 3847).
+        Numero de outliers confirmados (= len(outlier_idx)).
+        Equivalente en R: ``ss8`` (linea 3847).
 
     used_loose_radius : bool
-        True if the fallback 0.15 radius was needed because no sample
-        qualified at 0.10.
-        R equivalent: ``rojo8``  (line 3818 / 3843).
+        True si se necesito el radio de respaldo 0.15 porque ninguna muestra
+        clasifico a 0.10.
+        Equivalente en R: ``rojo8`` (linea 3818 / 3843).
 
     core_genes_found : List[str]
-        The core genes that were actually present in the matrix.
-        (Generalisation over R: R assumes all 12 are always present.)
+        Los genes centrales que estaban realmente presentes en la matriz.
+        (Generalizacion sobre R: R asume que los 12 siempre estan presentes.)
 
-    core_matrix : pd.DataFrame, shape (n_core_genes, n_samples)
-        The normalised core-gene sub-matrix used for PCA, with gene
-        symbols as the index.  Stored so that plot_gene_panels() can
-        draw expression traces without needing to re-run extraction.
-        Set to None if CPCA was run with store_core_matrix=False.
+    core_matrix : pd.DataFrame, forma (n_genes_centrales, n_muestras)
+        La submatriz normalizada de genes centrales usada para PCA, con
+        simbolos genicos como indice. Almacenada para que plot_gene_panels()
+        pueda dibujar trazas de expresion sin re-ejecutar la extraccion.
+        Es None si CPCA se ejecuto con store_core_matrix=False.
     """
 
     sample_order:              np.ndarray
@@ -116,63 +120,63 @@ class CPCAResult:
 
     def summary(self) -> str:
         lines = [
-            "=== CPCA Summary ===",
-            f"  Core genes used    : {len(self.core_genes_found)}  {self.core_genes_found}",
-            f"  PC1 variance       : {self.variance_explained[0]:.1%}",
-            f"  PC2 variance       : {self.variance_explained[1]:.1%}",
-            f"  PC3 variance       : {self.variance_explained[2]:.1%}",
-            f"  Outlier candidates : {len(self.outlier_candidate_idx)}",
-            f"  Confirmed outliers : {self.n_outliers}"
-            + (" (loose radius used)" if self.used_loose_radius else ""),
+            "=== Resumen CPCA ===",
+            f"  Genes centrales usados : {len(self.core_genes_found)}  {self.core_genes_found}",
+            f"  Varianza PC1           : {self.variance_explained[0]:.1%}",
+            f"  Varianza PC2           : {self.variance_explained[1]:.1%}",
+            f"  Varianza PC3           : {self.variance_explained[2]:.1%}",
+            f"  Candidatos a outlier   : {len(self.outlier_candidate_idx)}",
+            f"  Outliers confirmados   : {self.n_outliers}"
+            + (" (se uso radio relajado)" if self.used_loose_radius else ""),
         ]
         return "\n".join(lines)
 
 # ===========================================================================
-# CPCA class
+# Clase CPCA
 # ===========================================================================
 
 class CPCA:
     """
-    Extract core clock genes and compute a circular sample ordering via PCA.
+    Extrae genes centrales y computa un ordenamiento circular de muestras via PCA.
 
-    This class implements two responsibilities that are tightly coupled in
-    the R source but kept separate here for clarity:
+    Esta clase implementa dos responsabilidades que estan acopladas en
+    el codigo R pero se mantienen separadas aqui por claridad:
 
-    1. **Core gene extraction** — pull the 12 core clock gene rows out of
-       the full normalised matrix (R lines 3954-3955).
+    1. **Extraccion de genes centrales** — extraer las 12 filas de genes
+       centrales del reloj de la matriz normalizada completa (R lineas 3954-3955).
 
-    2. **CPCA** — run PCA on the row-centred core-gene matrix, project
-       each sample onto the unit circle using PC1 and PC2 loadings, sort
-       samples by their angle phi, and flag near-origin outliers
-       (R function ``obtainCPCA13``, lines 3804-3893).
+    2. **CPCA** — ejecutar PCA sobre la matriz de genes centrales centrada por
+       filas, proyectar cada muestra sobre el circulo unitario usando los
+       loadings de PC1 y PC2, ordenar muestras por su angulo phi, y marcar
+       outliers cercanos al origen (funcion R ``obtainCPCA13``, lineas 3804-3893).
 
-    Parameters
+    Parametros
     ----------
-    core_genes : list of str, optional
-        Gene symbols to use as the circadian anchor set.
-        Defaults to the 12 genes from the CIRCUST paper.
-        You can pass a custom list if working with a non-human organism or
-        a different gene annotation.
+    core_genes : lista de str, opcional
+        Simbolos genicos a usar como conjunto ancla circadiano.
+        Por defecto los 12 genes del articulo CIRCUST.
+        Se puede pasar una lista personalizada si se trabaja con un organismo
+        no humano o una anotacion genica diferente.
 
     n_outlier_candidates : int
-        How many samples to examine as potential outliers (those with the
-        smallest PC1-PC2 norm). R default: 8.
+        Cuantas muestras examinar como outliers potenciales (las de menor
+        norma PC1-PC2). Valor R por defecto: 8.
 
     tight_radius : float
-        Primary distance threshold. Samples with norm <= tight_radius are
-        confirmed outliers. R: 0.10.
+        Umbral de distancia primario. Muestras con norma <= tight_radius se
+        confirman como outliers. R: 0.10.
 
     loose_radius : float
-        Fallback threshold used when no sample qualifies at tight_radius.
+        Umbral de respaldo usado cuando ninguna muestra califica con tight_radius.
         R: 0.15.
 
     verbose : bool
-        Print progress messages if True.
+        Imprime mensajes de progreso si True.
 
-    Examples
-    --------
-    >>> from preprocessing import load_expression_matrix, Preprocessor
-    >>> from cpca import CPCA
+    Ejemplo
+    -------
+    >>> from circust.preprocessing import load_expression_matrix, Preprocessor
+    >>> from circust.cpca import CPCA
     >>>
     >>> matrix  = load_expression_matrix("data/raw/expression.csv")
     >>> prep    = Preprocessor().run(matrix)
@@ -196,40 +200,38 @@ class CPCA:
         self.verbose              = verbose
 
     # -----------------------------------------------------------------------
-    # Public API
+    # API publica
     # -----------------------------------------------------------------------
 
     def run(self, expr_norm: pd.DataFrame) -> CPCAResult:
         """
-        Extract core genes and compute the circular sample ordering.
+        Extrae genes centrales y computa el ordenamiento circular de muestras.
 
-        Parameters
+        Parametros
         ----------
         expr_norm : pd.DataFrame
-            Full normalised expression matrix (genes × samples, values in
-            [-1, 1]).  This is ``PreprocessingResult.expr_norm``.
+            Matriz de expresion normalizada completa (genes x muestras,
+            valores en [-1, 1]). Es ``PreprocessingResult.expr_norm``.
 
-        Returns
-        -------
+        Devuelve
+        --------
         CPCAResult
         """
-        # step 1 — pull core gene rows from the full matrix
+        # paso 1 — extraer filas de genes centrales de la matriz completa
         core_matrix, genes_found = self._extract_core_genes(expr_norm)
 
-        # step 2 — run CPCA on the core gene matrix
+        # paso 2 — ejecutar CPCA sobre la matriz de genes centrales
         result = self._run_cpca(core_matrix, genes_found)
 
         self._log(result.summary())
         return result
 
     # -----------------------------------------------------------------------
-    # Private steps
+    # Pasos privados
     # -----------------------------------------------------------------------
 
     def _extract_core_genes(self, expr_norm: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-        """
-        Select the core clock gene rows from the full normalised matrix.
-        """
+        """Selecciona las filas de genes centrales de la matriz normalizada completa."""
         genes_found  = []
         missing      = []
 
@@ -241,23 +243,23 @@ class CPCA:
 
         if missing:
             self._log(
-                f"  WARNING — {len(missing)} core gene(s) not found in matrix "
-                f"and will be skipped: {missing}"
+                f"  AVISO — {len(missing)} gen(es) central(es) no encontrado(s) en la matriz "
+                f"y se omitiran: {missing}"
             )
 
         if len(genes_found) < 2:
             raise ValueError(
-                f"CPCA requires at least 2 core genes. "
-                f"Only found: {genes_found}. "
-                f"Check that the matrix rows use standard gene symbols."
+                f"CPCA requiere al menos 2 genes centrales. "
+                f"Solo se encontraron: {genes_found}. "
+                f"Verifica que las filas de la matriz usen simbolos genicos estandar."
             )
 
         self._log(
-            f"  Core genes extracted: {len(genes_found)} / "
+            f"  Genes centrales extraidos: {len(genes_found)} / "
             f"{len(self.core_genes)}"
         )
 
-        # preserve coreG ordering, just like R's match()
+        # preservar el orden de coreG, igual que match() de R
         core_matrix = expr_norm.loc[genes_found]
         return core_matrix, genes_found
 
@@ -267,77 +269,76 @@ class CPCA:
         genes_found: list[str],
     ) -> CPCAResult:
         """
-        Run the full CPCA procedure on the core gene normalised matrix.
+        Ejecuta el procedimiento CPCA completo sobre la matriz normalizada de genes centrales.
 
-        R equivalent: ``obtainCPCA13()`` lines 3804-3893.
+        Equivalente en R: ``obtainCPCA13()`` lineas 3804-3893.
 
-        Steps inside this method, with R line references:
+        Pasos dentro de este metodo, con referencias a lineas de R:
 
-        1. Row-centre the matrix (R: centrado(), lines 3806)
-        2. Column-scale and run PCA (R: prcomp(scale.=TRUE), line 3806)
-        3. Extract PC1, PC2, PC3 loadings per sample (lines 3810-3812)
-        4. Project samples onto the unit circle (lines 3813-3815)
-        5. Sort samples by angle phi (lines 3816-3817)
-        6. Compute PC1-PC2 norm per sample (lines 3821-3823)
-        7. Flag outlier samples (lines 3824-3847)
-        8. Map outlier positions into the sorted order (line 3872)
+        1. Centrar por filas la matriz (R: centrado(), linea 3806)
+        2. Escalar por columnas y ejecutar PCA (R: prcomp(scale.=TRUE), linea 3806)
+        3. Extraer loadings de PC1, PC2, PC3 por muestra (lineas 3810-3812)
+        4. Proyectar muestras sobre el circulo unitario (lineas 3813-3815)
+        5. Ordenar muestras por angulo phi (lineas 3816-3817)
+        6. Calcular norma PC1-PC2 por muestra (lineas 3821-3823)
+        7. Marcar muestras outlier (lineas 3824-3847)
+        8. Mapear posiciones de outliers al orden clasificado (linea 3872)
         """
-        values   = core_matrix.values.astype(float)   # shape: (n_genes, n_samples)
+        values   = core_matrix.values.astype(float)   # forma: (n_genes, n_muestras)
         n_genes, n_samples = values.shape
 
-        # ── Step 1: row-centre ──────────────────────────────────────────────
-        # In numpy: axis=1 means "along columns" → each row mean subtracted.
+        # ── Paso 1: centrar por filas ───────────────────────────────────────
+        # En numpy: axis=1 significa "a lo largo de columnas" -> se resta la media de cada fila.
         row_means = values.mean(axis=1, keepdims=True)
-        centred   = values - row_means    # shape: (n_genes, n_samples)
+        centred   = values - row_means    # forma: (n_genes, n_muestras)
 
-        # ── Step 2: column-scale and PCA ────────────────────────────────────
+        # ── Paso 2: escalar por columnas y PCA ──────────────────────────────
         # R: prcomp(centrado(mNorm8), scale.=TRUE, center=FALSE)
         #
-        # In R, prcomp treats COLUMNS as variables and ROWS as observations.
-        # Here the matrix is (n_genes × n_samples), so:
-        #   - columns = samples  → variables in R's view
-        #   - rows    = genes    → observations in R's view
+        # En R, prcomp trata las COLUMNAS como variables y las FILAS como observaciones.
+        # Aqui la matriz es (n_genes x n_muestras), por lo que:
+        #   - columnas = muestras  -> variables en la vista de R
+        #   - filas    = genes     -> observaciones en la vista de R
         #
-        # scale.=TRUE divides each COLUMN (= each sample) by its std dev.
-        # This equalises the contribution of every sample to the PCA.
+        # scale.=TRUE divide cada COLUMNA (= cada muestra) por su desv. estandar.
+        # Esto iguala la contribucion de cada muestra al PCA.
         #
-        # sklearn's PCA also treats rows as observations. So we pass the
-        # matrix as-is (genes × samples) and sklearn sees genes as
-        # observations and samples as features — exactly matching R.
+        # sklearn PCA tambien trata las filas como observaciones. Asi que pasamos la
+        # matriz tal cual (genes x muestras) y sklearn ve genes como observaciones
+        # y muestras como features — replicando exactamente R.
         #
-        # After scaling columns:
+        # Tras el escalado de columnas:
         col_rms = np.sqrt(np.sum(centred**2, axis=0) / (n_genes - 1))
-        col_rms[col_rms == 0] = 1.0          # evitar división por cero
-        scaled  = centred / col_rms          # shape: (n_genes, n_samples)
+        col_rms[col_rms == 0] = 1.0          # evitar division por cero
+        scaled  = centred / col_rms          # forma: (n_genes, n_muestras)
 
-        # WHY NOT sklearn PCA?
-        # sklearn PCA always subtracts column means internally before SVD
-        # and has no center=False option. Passing our matrix to PCA would
-        # add a second, unwanted centering pass on top of centrado().
+        # POR QUE NO sklearn PCA?
+        # sklearn PCA siempre resta las medias de columnas internamente antes de SVD
+        # y no tiene opcion center=False. Pasar nuestra matriz a PCA anadira un
+        # segundo centrado no deseado sobre centrado().
         #
-        # WHY NOT TruncatedSVD.explained_variance_ratio_?
-        # TruncatedSVD computes its ratio as var(projections) / var(X_input),
-        # which uses a different denominator than R. R uses
-        # sigma_k^2 / sum(ALL sigma^2) — a ratio purely of singular values.
-        # The numbers differ by ~0.1%, which matters for a faithful port.
+        # POR QUE NO TruncatedSVD.explained_variance_ratio_?
+        # TruncatedSVD calcula su ratio como var(proyecciones) / var(X_entrada),
+        # que usa un denominador diferente a R. R usa
+        # sigma_k^2 / sum(TODOS sigma^2) — un ratio puramente de valores singulares.
+        # Los numeros difieren en ~0.1%, lo cual importa para un port fiel.
         #
-        # SOLUTION: TruncatedSVD for the decomposition (no centering),
-        # scipy full_svd for ALL singular values to get the correct denominator.
+        # SOLUCION: SVD completo de numpy para TODOS los valores singulares para
+        # obtener el denominador correcto.
         n_components = min(3, n_genes, n_samples)
         _, sigma_all, Vt = np.linalg.svd(scaled, full_matrices=False)
 
         # Las componentes (loadings) en Scipy/Numpy salen transpuestas (Vt)
-        # Vt tiene shape (n_genes, n_samples). Las filas son el equivalente a cp8$rotation
+        # Vt tiene forma (n_genes, n_muestras). Las filas son el equivalente a cp8$rotation
         pc1 = Vt[0]
         pc2 = Vt[1]
         pc3 = Vt[2] if n_components >= 3 else np.zeros(n_samples)
 
-
-        # ── Step 4: variance explained ──────────────────────────────────────
+        # ── Paso 4: varianza explicada ──────────────────────────────────────
         var_exp = np.zeros(3)
         var_exp[:n_components] = (sigma_all[:n_components]**2) / np.sum(sigma_all**2)
-        
-        # ── Step 5: project onto unit circle ────────────────────────────────
+
+        # ── Paso 5: proyectar sobre el circulo unitario ─────────────────────
         norm12 = np.sqrt(pc1**2 + pc2**2)
         safe_norm = np.where(norm12 == 0, 1.0, norm12)
 
@@ -345,22 +346,21 @@ class CPCA:
         yi  = pc2 / safe_norm
         phi = np.arctan2(yi, xi) % (2 * np.pi)                    # R: phi8
 
-        # ── Step 6: sort samples by angle ───────────────────────────────────
+        # ── Paso 6: ordenar muestras por angulo ────────────────────────────
         sample_order   = np.argsort(phi)                            # R: orderCPCA8
         circular_scale = phi[sample_order]                          # R: escalaPhi8
-        
-        # ── Step 7: outlier logic (continúa igual) ──────────────────────────
+
+        # ── Paso 7: logica de outliers ─────────────────────────────────────
         d = norm12                                                  # R: d8
 
-        # ── Step 7: flag outlier samples ────────────────────────────────────
-        # R (line 3824): obs8 <- order(d8)[1:nOuts]
-        # Take the nOuts samples with the SMALLEST norm (closest to origin)
+        # R (linea 3824): obs8 <- order(d8)[1:nOuts]
+        # Tomar las nOuts muestras con MENOR norma (mas cercanas al origen)
         n_cands            = min(self.n_outlier_candidates, n_samples)
         candidate_idx      = np.argsort(d)[:n_cands]               # R: obs8
 
-        # R (lines 3831-3847): check radii in two passes
-        #   First pass: count samples with d <= 0.10 (tight radius)
-        #   Second pass (only if first found nothing): count d <= 0.15
+        # R (lineas 3831-3847): verificar radios en dos pasadas
+        #   Primera pasada: contar muestras con d <= 0.10 (radio estricto)
+        #   Segunda pasada (solo si la primera no encontro nada): contar d <= 0.15
         tight_mask = d[candidate_idx] <= self.tight_radius
         used_loose = False
 
@@ -373,8 +373,8 @@ class CPCA:
 
         n_outliers = len(outlier_idx)                               # R: ss8
 
-        # ── Step 8: map outlier positions into the sorted order ─────────────
-        # So for each outlier original index, we find where it sits in sample_order.
+        # ── Paso 8: mapear posiciones de outliers al orden clasificado ─────
+        # Para cada indice original de outlier, encontramos donde esta en sample_order.
         if n_outliers > 0:
             outlier_positions = np.array([
                 int(np.where(sample_order == idx)[0][0])
@@ -400,10 +400,9 @@ class CPCA:
         )
 
     # -----------------------------------------------------------------------
-    # Utility
+    # Utilidades
     # -----------------------------------------------------------------------
 
     def _log(self, message: str) -> None:
         if self.verbose:
             print(message)
-
