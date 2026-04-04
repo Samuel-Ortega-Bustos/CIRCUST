@@ -40,7 +40,7 @@ from circust.preliminary_order import PreliminaryOrderResult
 
 
 # ---------------------------------------------------------------------------
-# Shared
+# Compartido
 # ---------------------------------------------------------------------------
 _FMM_COLOUR = "#E41A1C"
 _COS_COLOUR = "#377EB8"
@@ -67,9 +67,9 @@ def plot_pipeline_summary(
     figsize: tuple[float, float] = (14, 10),
 ) -> Figure:
     """
-    Composite four-panel summary of the CIRCUST pipeline.
+    Resumen compuesto de cuatro paneles del pipeline CIRCUST.
 
-    Layout::
+    Disposición::
 
         ┌──────────────┬──────────────┐
         │ A. PC scatter │ B. Residuals │
@@ -77,32 +77,32 @@ def plot_pipeline_summary(
         │ C. Peaks     │ D. R² bars   │
         └──────────────┴──────────────┘
 
-    Parameters
+    Parámetros
     ----------
     cpca_result : CPCAResult
-        Initial CPCA result (before outlier removal).
+        Resultado CPCA inicial (antes de eliminar outliers).
     outlier_result : OutlierRefinementResult
-        Output of OutlierRefiner.
+        Salida de OutlierRefiner.
     order_result : PreliminaryOrderResult
-        Output of PreliminaryOrderEstimator.
+        Salida de PreliminaryOrderEstimator.
     title : str
-        Overall figure title.
+        Título global de la figura.
     figsize : tuple
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     fig = plt.figure(figsize=figsize)
     gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.35, wspace=0.30)
 
-    # ── Panel A: PC1 vs PC2 scatter ─────────────────────────────────────
+    # ── Panel A: dispersión PC1 vs PC2 ──────────────────────────────────
     ax_a = fig.add_subplot(gs[0, 0])
     _draw_pc_scatter(ax_a, cpca_result)
     ax_a.set_title("A. CPCA — PC1 vs PC2", fontsize=10, fontweight="bold",
                     pad=6)
 
-    # ── Panel B: Residual heatmap (compact) ──────────────────────────────
+    # ── Panel B: heatmap de residuos (compacto) ──────────────────────────
     ax_b = fig.add_subplot(gs[0, 1])
     _draw_residual_compact(ax_b, outlier_result)
     n_out = len(outlier_result.samples_dropped)
@@ -111,13 +111,13 @@ def plot_pipeline_summary(
         fontsize=10, fontweight="bold", pad=6,
     )
 
-    # ── Panel C: Circular peak diagram ───────────────────────────────────
+    # ── Panel C: diagrama circular de picos ──────────────────────────────
     ax_c = fig.add_subplot(gs[1, 0], polar=True)
     _draw_polar_peaks(ax_c, order_result)
     ax_c.set_title("C. Core gene peak times", fontsize=10,
                     fontweight="bold", pad=12)
 
-    # ── Panel D: R² bar chart ────────────────────────────────────────────
+    # ── Panel D: gráfico de barras R² ────────────────────────────────────
     ax_d = fig.add_subplot(gs[1, 1])
     _draw_r2_bars(ax_d, order_result)
     ax_d.set_title("D. FMM R\u00b2 per core gene", fontsize=10,
@@ -132,19 +132,19 @@ def plot_pipeline_summary(
 
 
 # ---------------------------------------------------------------------------
-# Panel helpers (draw into an existing Axes)
+# Funciones auxiliares de paneles (dibujan en un Axes existente)
 # ---------------------------------------------------------------------------
 
 def _draw_pc_scatter(ax, cpca: "CPCAResult") -> None:
-    """Mini PC scatter for the summary panel."""
+    """Dispersión PC mini para el panel resumen."""
     pc1, pc2 = cpca.pc1, cpca.pc2
     var = cpca.variance_explained
 
-    # All samples
+    # Todas las muestras
     ax.scatter(pc1, pc2, s=10, color="#CCCCCC", edgecolors="#999999",
                linewidths=0.3, zorder=3)
 
-    # Outlier candidates
+    # Candidatos a outlier
     conf = set(cpca.outlier_idx.tolist())
     colours = ["#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
                "#FF7F00", "#A65628", "#F781BF", "#66C2A5"]
@@ -154,7 +154,7 @@ def _draw_pc_scatter(ax, cpca: "CPCAResult") -> None:
         ax.scatter(pc1[idx], pc2[idx], s=40, marker="s",
                    facecolors=face, edgecolors=col, linewidths=1.2, zorder=5)
 
-    # Threshold circles
+    # Círculos de umbral
     theta = np.linspace(0, 2 * np.pi, 200)
     used_loose = cpca.used_loose_radius
     active_r = 0.15 if used_loose else 0.10
@@ -176,7 +176,7 @@ def _draw_pc_scatter(ax, cpca: "CPCAResult") -> None:
 
 
 def _draw_residual_compact(ax, result) -> None:
-    """Compact residual strip chart for the summary panel."""
+    """Diagrama de tiras de residuos compacto para el panel resumen."""
     std_res = result.std_residuals_fmm
     if std_res is None:
         ax.text(0.5, 0.5, "No residual data", ha="center", va="center",
@@ -214,7 +214,7 @@ def _draw_residual_compact(ax, result) -> None:
 
 
 def _draw_polar_peaks(ax, result) -> None:
-    """Mini circular peak diagram for the summary panel."""
+    """Diagrama circular de picos mini para el panel resumen."""
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
@@ -238,7 +238,7 @@ def _draw_polar_peaks(ax, result) -> None:
         ax.text(theta, 1.05, gene, fontsize=5.5, fontweight="bold",
                 color=colour, ha="center", va="center", zorder=6)
 
-    # Day/night shading
+    # Sombreado día/noche
     day_t = np.linspace(0, np.pi, 100)
     night_t = np.linspace(np.pi, 2 * np.pi, 100)
     ax.fill_between(day_t, 0, 0.6, alpha=0.06, color=_DAY_COLOUR)
@@ -252,7 +252,7 @@ def _draw_polar_peaks(ax, result) -> None:
 
 
 def _draw_r2_bars(ax, result) -> None:
-    """Mini R² bar chart for the summary panel."""
+    """Gráfico de barras R² mini para el panel resumen."""
     genes = result.core_genes
     r2 = result.r2_fmm
     order = np.argsort(r2)[::-1]
@@ -284,7 +284,7 @@ def _draw_r2_bars(ax, result) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 2 — Variance explained (scree plot)
+# Gráfico 2 — Varianza explicada (scree plot)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_variance_explained(
@@ -294,24 +294,23 @@ def plot_variance_explained(
     figsize: tuple[float, float] = (6, 4),
 ) -> Figure:
     """
-    Scree-style bar chart of variance explained by each PC.
+    Gráfico de barras tipo scree de la varianza explicada por cada CP.
 
-    Shows the first ``n_components`` bars with a cumulative line
-    overlay.  PC1 and PC2 (used by CPCA) are highlighted; the
-    minimum thresholds for PC2 (10%) and total PC1+PC2 (40%) are
-    marked.
+    Muestra las primeras ``n_components`` barras con una línea acumulada
+    superpuesta. PC1 y PC2 (usados por CPCA) se resaltan; se marcan los
+    umbrales mínimos para PC2 (10%) y PC1+PC2 total (40%).
 
-    Parameters
+    Parámetros
     ----------
     cpca_result : CPCAResult
-        Must have ``variance_explained`` with at least 3 entries.
+        Debe tener ``variance_explained`` con al menos 3 entradas.
     n_components : int
-        Number of PCs to display.
+        Número de CPs a mostrar.
     title : str
     figsize : tuple
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     var = cpca_result.variance_explained
@@ -322,7 +321,7 @@ def plot_variance_explained(
 
     fig, ax1 = plt.subplots(figsize=figsize)
 
-    # Bars
+    # Barras
     colours = ["#E41A1C" if i < 2 else "#AAAAAA" for i in range(n_show)]
     bars = ax1.bar(range(1, n_show + 1), var_show * 100,
                    color=colours, edgecolor="white", linewidth=0.5,
@@ -334,7 +333,7 @@ def plot_variance_explained(
     ax1.tick_params(labelsize=7)
     ax1.spines[["top", "right"]].set_visible(False)
 
-    # Cumulative line on twin axis
+    # Línea acumulada en eje secundario
     ax2 = ax1.twinx()
     ax2.plot(range(1, n_show + 1), cumvar * 100, "o-",
              color="#377EB8", markersize=5, linewidth=1.2, zorder=4)
@@ -343,7 +342,7 @@ def plot_variance_explained(
     ax2.spines["right"].set_color("#377EB8")
     ax2.set_ylim(0, 105)
 
-    # Threshold lines
+    # Líneas de umbral
     ax1.axhline(10, color="#E41A1C", linestyle=":", linewidth=0.7, alpha=0.5)
     ax1.text(n_show + 0.3, 10, "PC2 min (10%)", fontsize=6,
              color="#E41A1C", va="center")
@@ -352,7 +351,7 @@ def plot_variance_explained(
     ax2.text(0.6, 42, "PC1+PC2 min (40%)", fontsize=6,
              color="#377EB8", va="bottom")
 
-    # Annotate PC1 + PC2
+    # Anotar PC1 + PC2
     for i in range(min(2, n_show)):
         ax1.text(i + 1, var_show[i] * 100 + 1,
                  f"{var_show[i]*100:.1f}%", ha="center", fontsize=7,
@@ -368,7 +367,7 @@ def plot_variance_explained(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 3 — Expression heatmap overview
+# Gráfico 3 — Heatmap de expresión global
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_expression_overview(
@@ -380,43 +379,43 @@ def plot_expression_overview(
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
     """
-    Heatmap of normalised expression for the top genes.
+    Heatmap de expresión normalizada para los genes más rítmicos.
 
-    Shows a heat-map (genes × samples in circular order) where
-    the colour represents expression level [-1, +1].  Core clock
-    genes are highlighted with a side colour bar.
+    Muestra un mapa de calor (genes × muestras en orden circular) donde
+    el color representa el nivel de expresión [-1, +1]. Los genes reloj
+    core se resaltan con una barra de color lateral.
 
-    Purpose: provides a genome-wide snapshot of the circadian signal
-    — rhythmic genes show clean sinusoidal bands across samples.
+    Propósito: proporciona una instantánea a nivel genómico de la señal
+    circadiana — los genes rítmicos muestran bandas sinusoidales limpias.
 
-    Parameters
+    Parámetros
     ----------
     expr_ordered : pd.DataFrame
-        Expression matrix already ordered by circular phase
-        (e.g., ``PreliminaryOrderResult.expr_ordered``).
+        Matriz de expresión ya ordenada por fase circular
+        (p. ej., ``PreliminaryOrderResult.expr_ordered``).
     core_genes : list[str]
-        Core clock gene symbols for highlighting.
+        Símbolos de genes reloj core para resaltar.
     circular_scale : np.ndarray
-        Circular time axis for the x-axis.
+        Eje de tiempo circular para el eje x.
     n_top : int
-        Number of top genes to show (by row variance).
+        Número de genes top a mostrar (por varianza de fila).
     title : str
-    figsize : tuple, optional
+    figsize : tuple, opcional
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
-    # Select top genes by variance (most rhythmic)
+    # Seleccionar genes top por varianza (más rítmicos)
     row_var = expr_ordered.var(axis=1)
     top_genes = row_var.nlargest(n_top).index.tolist()
 
-    # Ensure all core genes are included
+    # Asegurar que todos los genes core están incluidos
     for cg in core_genes:
         if cg in expr_ordered.index and cg not in top_genes:
             top_genes.append(cg)
 
-    # Sort: core genes first, then by peak position (argmax)
+    # Ordenar: genes core primero, luego por posición de pico (argmax)
     def sort_key(gene):
         is_core = gene in core_genes
         peak_pos = np.argmax(expr_ordered.loc[gene].values)
@@ -435,7 +434,7 @@ def plot_expression_overview(
         gridspec_kw={"width_ratios": [0.03, 1], "wspace": 0.02},
     )
 
-    # Side colour bar — core genes highlighted
+    # Barra de color lateral — genes core resaltados
     core_mask = np.array([g in core_genes for g in top_genes])
     side_colours = np.where(core_mask, 1.0, 0.0)
     ax_bar.imshow(side_colours.reshape(-1, 1), aspect="auto",
@@ -445,12 +444,12 @@ def plot_expression_overview(
     ax_bar.set_yticks([])
     ax_bar.set_ylabel("Genes", fontsize=9)
 
-    # Main heatmap
+    # Heatmap principal
     cmap = plt.cm.RdBu_r
     im = ax_heat.imshow(mat, aspect="auto", cmap=cmap,
                         vmin=-1, vmax=1, interpolation="nearest")
 
-    # x-axis: show phase values
+    # Eje x: mostrar valores de fase
     n_samples = mat.shape[1]
     n_ticks = 8
     tick_positions = np.linspace(0, n_samples - 1, n_ticks, dtype=int)
@@ -459,17 +458,17 @@ def plot_expression_overview(
     ax_heat.set_xticklabels(tick_labels, fontsize=6)
     ax_heat.set_xlabel("Circular phase (rad)", fontsize=9)
 
-    # y-axis: gene names (only show a subset if too many)
+    # Eje y: nombres de genes (mostrar solo un subconjunto si hay demasiados)
     if n_genes_show <= 30:
         ax_heat.set_yticks(range(n_genes_show))
         ax_heat.set_yticklabels(top_genes, fontsize=5)
-        # Colour core gene labels
+        # Colorear etiquetas de genes core
         for i, label in enumerate(ax_heat.get_yticklabels()):
             if top_genes[i] in core_genes:
                 label.set_color("#E41A1C")
                 label.set_fontweight("bold")
     else:
-        # Show only core genes
+        # Mostrar solo genes core
         core_positions = [i for i, g in enumerate(top_genes) if g in core_genes]
         ax_heat.set_yticks(core_positions)
         ax_heat.set_yticklabels(
@@ -477,12 +476,12 @@ def plot_expression_overview(
             color="#E41A1C", fontweight="bold",
         )
 
-    # Colour bar
+    # Barra de color
     cbar = fig.colorbar(im, ax=ax_heat, shrink=0.6, pad=0.02)
     cbar.set_label("Normalised expression", fontsize=8)
     cbar.ax.tick_params(labelsize=6)
 
-    # Legend for side bar
+    # Leyenda para la barra lateral
     legend_elements = [
         Line2D([0], [0], marker="s", color="w",
                markerfacecolor="#E41A1C", markersize=8,

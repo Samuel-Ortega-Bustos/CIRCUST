@@ -39,7 +39,7 @@ from circust.outlier import OutlierRefinementResult
 
 
 # ---------------------------------------------------------------------------
-# Shared palette
+# Paleta compartida
 # ---------------------------------------------------------------------------
 _FMM_COLOUR = "#E41A1C"      # red
 _COS_COLOUR = "#377EB8"      # blue
@@ -59,32 +59,32 @@ def plot_core_gene_fits(
     show_eigengenes: bool = True,
 ) -> Figure:
     """
-    Grid of core-gene expression with FMM and Cosinor model overlays.
+    Cuadrícula de expresión de genes core con superposición de modelos FMM y Cosinor.
 
-    Each panel shows the observed expression (grey dots) ordered by
-    circular phase, with the FMM fit (red) and Cosinor fit (blue) on
-    top.  R² values for both models are annotated.
+    Cada panel muestra la expresión observada (puntos grises) ordenada por
+    fase circular, con el ajuste FMM (rojo) y el ajuste Cosinor (azul)
+    superpuestos. Se anotan los valores R² de ambos modelos.
 
-    Parameters
+    Parámetros
     ----------
     result : OutlierRefinementResult
-        Output of ``OutlierRefiner.run()``.
-    cpca_initial : CPCAResult, optional
-        The initial CPCA result (before outlier removal).  If provided,
-        the initial fits are plotted against the initial ordering.
-        If None, the final CPCA result is used (fits must match in size).
+        Salida de ``OutlierRefiner.run()``.
+    cpca_initial : CPCAResult, opcional
+        El resultado CPCA inicial (antes de eliminar outliers). Si se proporciona,
+        los ajustes iniciales se grafican contra el ordenamiento inicial.
+        Si es None, se usa el resultado CPCA final (los ajustes deben coincidir en tamaño).
     title : str
-        Suptitle label.
-    figsize : tuple, optional
-        Figure size.  Auto-computed if None.
+        Etiqueta del suptítulo.
+    figsize : tuple, opcional
+        Tamaño de la figura. Se calcula automáticamente si es None.
     show_eigengenes : bool
-        If True, include PC1/PC2/PC3 panels at the end.
+        Si es True, incluir paneles PC1/PC2/PC3 al final.
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
-    # Use the initial CPCA if provided (initial fits have pre-outlier length)
+    # Usar el CPCA inicial si se proporciona (los ajustes iniciales tienen longitud pre-outlier)
     cpca = cpca_initial if cpca_initial is not None else result.cpca_final
     time_points = cpca.circular_scale
     order = cpca.sample_order
@@ -104,14 +104,14 @@ def plot_core_gene_fits(
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     axes_flat = axes.flatten() if n_panels > 1 else [axes]
 
-    # Core matrix ordered by CPCA phase
+    # Matriz core ordenada por fase CPCA
     cm = cpca.core_matrix
     cm_vals = cm.values if hasattr(cm, "values") else cm
 
     for i, name in enumerate(signals):
         ax = axes_flat[i]
 
-        # Get observed data in CPCA order
+        # Obtener datos observados en orden CPCA
         if name in genes:
             gene_idx = genes.index(name)
             y_obs = cm_vals[gene_idx, order]
@@ -120,14 +120,14 @@ def plot_core_gene_fits(
             eigenvec = {"PC1": cpca.pc1, "PC2": cpca.pc2, "PC3": cpca.pc3}
             y_obs = eigenvec[name][order]
 
-        # Plot observed
+        # Graficar observado
         ax.plot(time_points, y_obs, "o",
                 color="#BBBBBB", markersize=1.8, zorder=2)
 
-        # FMM fit (initial fits match initial CPCA size)
+        # Ajuste FMM (los ajustes iniciales coinciden con el tamaño del CPCA inicial)
         if name in result.fmm_fits_initial:
             fr = result.fmm_fits_initial[name]
-            # Generate x-axis matching the fitted array length
+            # Generar eje x que coincida con la longitud del array ajustado
             fit_x = np.linspace(0, 2 * np.pi, len(fr.fitted), endpoint=False) \
                     if len(fr.fitted) != len(time_points) else time_points
             ax.plot(fit_x, fr.fitted, "-",
@@ -136,7 +136,7 @@ def plot_core_gene_fits(
         else:
             r2_fmm = None
 
-        # Cosinor fit
+        # Ajuste Cosinor
         if name in result.cosinor_fits_initial:
             cr = result.cosinor_fits_initial[name]
             fit_x = np.linspace(0, 2 * np.pi, len(cr.fitted), endpoint=False) \
@@ -147,7 +147,7 @@ def plot_core_gene_fits(
         else:
             r2_cos = None
 
-        # Annotations
+        # Anotaciones
         label = name
         if r2_fmm is not None:
             label += f"\nFMM R\u00b2={r2_fmm:.3f}"
@@ -159,11 +159,11 @@ def plot_core_gene_fits(
         ax.tick_params(labelsize=6, length=2)
         ax.spines[["top", "right"]].set_visible(False)
 
-    # Hide unused panels
+    # Ocultar paneles no usados
     for ax in axes_flat[n_panels:]:
         ax.set_visible(False)
 
-    # Shared legend
+    # Leyenda compartida
     legend_elements = [
         Line2D([0], [0], color=_FMM_COLOUR, lw=1.4, label="FMM"),
         Line2D([0], [0], color=_COS_COLOUR, lw=1.0,
@@ -192,24 +192,24 @@ def plot_residual_strips(
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
     """
-    Horizontal strip chart of standardised FMM residuals per gene.
+    Diagrama de tiras horizontal de residuos FMM estandarizados por gen.
 
-    Each row is a core gene (+ eigengenes).  Individual samples are
-    plotted as dots; those exceeding the multivariate threshold (|3|)
-    or univariate threshold (|4|) are colour-coded.  Vertical dashed
-    lines mark the thresholds.
+    Cada fila es un gen core (+ eigengenes). Las muestras individuales se
+    grafican como puntos; las que superan el umbral multivariante (|3|)
+    o el umbral univariante (|4|) se codifican por color. Líneas verticales
+    discontinuas marcan los umbrales.
 
-    Purpose: visually identify which samples are driving outlier
-    detection and in which genes.
+    Propósito: identificar visualmente qué muestras impulsan la detección
+    de outliers y en qué genes.
 
-    Parameters
+    Parámetros
     ----------
     result : OutlierRefinementResult
     title : str
-    figsize : tuple, optional
+    figsize : tuple, opcional
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     std_res = result.std_residuals_fmm  # DataFrame (genes × samples)
@@ -229,7 +229,7 @@ def plot_residual_strips(
         row = std_res.loc[gene].values
         y_pos = n_genes - 1 - i  # top gene at top
 
-        # Classify each sample
+        # Clasificar cada muestra
         normal = np.abs(row) <= 3
         multi = (np.abs(row) > 3) & (np.abs(row) <= 4)
         uni = np.abs(row) > 4
@@ -244,7 +244,7 @@ def plot_residual_strips(
                    marker="D", linewidths=0,
                    label="|res| > 4" if i == 0 else "")
 
-    # Threshold lines
+    # Líneas de umbral
     for thresh, colour in _THRESHOLD_COLOURS.items():
         ax.axvline(thresh, color=colour, linestyle="--", linewidth=0.8,
                    alpha=0.7, zorder=1)
@@ -260,7 +260,7 @@ def plot_residual_strips(
     ax.axvline(0, color="#DDDDDD", linewidth=0.5, zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
 
-    # Legend — deduplicated
+    # Leyenda — deduplicada
     handles, labels = ax.get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     if by_label:
@@ -288,24 +288,24 @@ def plot_residual_heatmap(
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
     """
-    Heatmap of |standardised FMM residuals| (genes × ordered samples).
+    Mapa de calor de |residuos FMM estandarizados| (genes × muestras ordenadas).
 
-    Colour scale uses three regions:
-      - |res| < 3  : white → light blue  (normal)
-      - 3 ≤ |res| < 4 : yellow → orange  (multivariate flag)
-      - |res| ≥ 4  : red → dark red      (univariate flag)
+    La escala de color usa tres regiones:
+      - |res| < 3  : blanco → azul claro  (normal)
+      - 3 ≤ |res| < 4 : amarillo → naranja  (señal multivariante)
+      - |res| ≥ 4  : rojo → rojo oscuro      (señal univariante)
 
-    Purpose: a global view of residual patterns — useful for spotting
-    sample-wide issues (vertical bands) or gene-specific issues (rows).
+    Propósito: vista global de patrones de residuos — útil para detectar
+    problemas a nivel de muestra (bandas verticales) o de gen (filas).
 
-    Parameters
+    Parámetros
     ----------
     result : OutlierRefinementResult
     title : str
-    figsize : tuple, optional
+    figsize : tuple, opcional
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     std_res = result.std_residuals_fmm
@@ -319,7 +319,7 @@ def plot_residual_heatmap(
     if figsize is None:
         figsize = (max(8, n_samples * 0.025), max(3, n_genes * 0.4))
 
-    # Custom colourmap with threshold boundaries
+    # Mapa de color personalizado con límites de umbral
     cmap = mcolors.LinearSegmentedColormap.from_list(
         "residuals",
         [
@@ -341,11 +341,11 @@ def plot_residual_heatmap(
     ax.set_yticklabels(gene_names, fontsize=7)
     ax.set_xlabel("Sample index (CPCA order)", fontsize=9)
 
-    # Colour bar
+    # Barra de color
     cbar = fig.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
     cbar.set_label("|Std. FMM residual|", fontsize=8)
     cbar.ax.tick_params(labelsize=7)
-    # Mark thresholds on colour bar
+    # Marcar umbrales en la barra de color
     for thresh in [3, 4]:
         cbar.ax.axhline(thresh, color="black", linewidth=0.8, linestyle="--")
         cbar.ax.text(1.5, thresh, f"{thresh}", fontsize=6, va="center",

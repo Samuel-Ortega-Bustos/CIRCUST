@@ -46,16 +46,16 @@ from circust.preliminary_order import PreliminaryOrderResult
 
 
 # ---------------------------------------------------------------------------
-# Shared constants
+# Constantes compartidas
 # ---------------------------------------------------------------------------
-_DAY_COLOUR = "#FDB863"     # warm orange
-_NIGHT_COLOUR = "#5E4FA2"   # deep purple
-_ARNTL_COLOUR = "#E41A1C"   # red
-_DBP_COLOUR = "#377EB8"     # blue
-_FMM_COLOUR = "#E41A1C"     # red (model line)
+_DAY_COLOUR = "#FDB863"     # naranja cálido
+_NIGHT_COLOUR = "#5E4FA2"   # morado intenso
+_ARNTL_COLOUR = "#E41A1C"   # rojo
+_DBP_COLOUR = "#377EB8"     # azul
+_FMM_COLOUR = "#E41A1C"     # rojo (línea de modelo)
 
-# Biological-time labels: π → CT0 (ARNTL), 0 → CT12
-# In the CIRCUST frame: 0 = subjective noon, π = subjective midnight/dawn
+# Etiquetas de tiempo biológico: π → CT0 (ARNTL), 0 → CT12
+# En el marco CIRCUST: 0 = mediodía subjetivo, π = medianoche/amanecer subjetivo
 _HOUR_LABELS_8 = [
     "CT12", "CT15", "CT18", "CT21",
     "CT0", "CT3", "CT6", "CT9",
@@ -63,7 +63,7 @@ _HOUR_LABELS_8 = [
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 1 — Circular peak diagram (polar)
+# Gráfico 1 — Diagrama de picos circulares (polar)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_circular_peaks(
@@ -73,26 +73,26 @@ def plot_circular_peaks(
     show_ct_labels: bool = True,
 ) -> Figure:
     """
-    Polar plot of FMM peak times for each core clock gene.
+    Gráfico polar de los tiempos de pico FMM para cada gen reloj core.
 
-    Genes are placed around a circle at their estimated peak phase.
-    ARNTL is anchored at π (CT0/dawn), and DBP appears in the first
-    half [0, π) if the direction is correct.
+    Los genes se sitúan alrededor de un círculo en su fase de pico estimada.
+    ARNTL está anclado en π (CT0/amanecer), y DBP aparece en la primera
+    mitad [0, π) si la dirección es correcta.
 
-    Parameters
+    Parámetros
     ----------
     result : PreliminaryOrderResult
-        Output of ``PreliminaryOrderEstimator.run()``.
+        Salida de ``PreliminaryOrderEstimator.run()``.
     title : str
-        Plot title label.
+        Etiqueta del título del gráfico.
     figsize : tuple
-        Figure size in inches.
+        Tamaño de la figura en pulgadas.
     show_ct_labels : bool
-        If True, show circadian-time labels (CT0, CT6, …) around the
-        outer ring.
+        Si es True, mostrar etiquetas de tiempo circadiano (CT0, CT6, …)
+        alrededor del anillo exterior.
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     genes = result.core_genes
@@ -102,16 +102,16 @@ def plot_circular_peaks(
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, polar=True)
 
-    # Polar config: 0 at top (12 o'clock), clockwise
+    # Configuración polar: 0 en la parte superior (12 en punto), sentido horario
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
-    # Plot each gene as a radial marker + label
+    # Graficar cada gen como marcador radial + etiqueta
     for i, gene in enumerate(genes):
         theta = peaks[i]
         r = 0.85  # radial position for marker
 
-        # Colour: ARNTL/DBP special, then day/night
+        # Color: ARNTL/DBP especiales, luego día/noche
         if gene == "ARNTL":
             colour = _ARNTL_COLOUR
         elif gene == "DBP":
@@ -121,14 +121,14 @@ def plot_circular_peaks(
         else:
             colour = _NIGHT_COLOUR
 
-        # Marker
+        # Marcador
         ax.plot(theta, r, "o", color=colour, markersize=10, zorder=5)
 
-        # Radial spoke (thin line from centre to marker)
+        # Radio (línea fina desde el centro al marcador)
         ax.plot([theta, theta], [0, r], "-",
                 color=colour, linewidth=0.8, alpha=0.5, zorder=2)
 
-        # Label — slightly outside the marker
+        # Etiqueta — ligeramente fuera del marcador
         label_r = 1.02
         ha = "left" if 0 <= theta < np.pi else "right"
         if abs(theta - np.pi / 2) < 0.3 or abs(theta - 3 * np.pi / 2) < 0.3:
@@ -137,11 +137,11 @@ def plot_circular_peaks(
         ax.text(theta, label_r, gene, fontsize=7.5, fontweight="bold",
                 color=colour, ha=ha, va="center", zorder=6)
 
-    # Radial grid: single ring at r=0.85
+    # Cuadrícula radial: anillo único en r=0.85
     ax.set_ylim(0, 1.15)
     ax.set_yticks([])
 
-    # Angular ticks: 8 divisions (every π/4)
+    # Marcas angulares: 8 divisiones (cada π/4)
     angles_8 = np.linspace(0, 2 * np.pi, 8, endpoint=False)
     ax.set_xticks(angles_8)
 
@@ -151,8 +151,8 @@ def plot_circular_peaks(
         ax.set_xticklabels([f"{int(np.degrees(a))}\u00b0" for a in angles_8],
                            fontsize=7)
 
-    # Day/night shading
-    # Day = [0, π), Night = [π, 2π)
+    # Sombreado día/noche
+    # Día = [0, π), Noche = [π, 2π)
     day_theta = np.linspace(0, np.pi, 100)
     night_theta = np.linspace(np.pi, 2 * np.pi, 100)
     ax.fill_between(day_theta, 0, 0.65, alpha=0.06,
@@ -160,20 +160,20 @@ def plot_circular_peaks(
     ax.fill_between(night_theta, 0, 0.65, alpha=0.06,
                     color=_NIGHT_COLOUR, zorder=0)
 
-    # Phase boundary lines at 0 and π
+    # Líneas de límite de fase en 0 y π
     ax.plot([0, 0], [0, 0.65], "-", color="#AAAAAA",
             linewidth=0.8, zorder=1)
     ax.plot([np.pi, np.pi], [0, 0.65], "-", color="#AAAAAA",
             linewidth=0.8, zorder=1)
 
-    # Phase labels
+    # Etiquetas de fase
     ax.text(np.pi / 2, 0.35, "DAY", fontsize=9, ha="center", va="center",
             color=_DAY_COLOUR, alpha=0.4, fontweight="bold", zorder=1)
     ax.text(3 * np.pi / 2, 0.35, "NIGHT", fontsize=9, ha="center",
             va="center", color=_NIGHT_COLOUR, alpha=0.4,
             fontweight="bold", zorder=1)
 
-    # Legend
+    # Leyenda
     legend_elements = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=_ARNTL_COLOUR,
                markersize=8, label="ARNTL (anchor, \u03c0)"),
@@ -199,7 +199,7 @@ def plot_circular_peaks(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 2 — Ordered expression profiles with FMM overlay
+# Gráfico 2 — Perfiles de expresión ordenados con superposición FMM
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_ordered_profiles(
@@ -208,21 +208,21 @@ def plot_ordered_profiles(
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
     """
-    Grid of core-gene expression profiles in the final biological order.
+    Cuadrícula de perfiles de expresión de genes core en el orden biológico final.
 
-    Each panel shows expression values (grey dots) vs circular phase,
-    with the FMM model curve (red line) overlaid and the peak time
-    marked with a vertical dashed line.
+    Cada panel muestra los valores de expresión (puntos grises) vs fase circular,
+    con la curva del modelo FMM (línea roja) superpuesta y el tiempo de pico
+    marcado con una línea vertical discontinua.
 
-    Parameters
+    Parámetros
     ----------
     result : PreliminaryOrderResult
-        Output of ``PreliminaryOrderEstimator.run()``.
+        Salida de ``PreliminaryOrderEstimator.run()``.
     title : str
-    figsize : tuple, optional
+    figsize : tuple, opcional
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     from circust.fitting.fmm import FMMModel
@@ -241,7 +241,7 @@ def plot_ordered_profiles(
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     axes_flat = axes.flatten() if n_core > 1 else [axes]
 
-    # Generate smooth FMM curves for overlay
+    # Generar curvas FMM suaves para superponer
     t_smooth = np.linspace(0, 2 * np.pi, 300)
 
     for i, gene in enumerate(genes):
@@ -253,10 +253,10 @@ def plot_ordered_profiles(
 
         y_obs = expr.loc[gene].values
 
-        # Observed expression
+        # Expresión observada
         ax.plot(esc, y_obs, "o", color="#BBBBBB", markersize=1.5, zorder=2)
 
-        # FMM model curve from parameters
+        # Curva del modelo FMM a partir de los parámetros
         par = result.fmm_params[i]  # [M, A, α, β, ω]
         M, A, alpha, beta, omega = par
         if A != 0:
@@ -266,12 +266,12 @@ def plot_ordered_profiles(
             ax.plot(t_smooth, fmm_smooth, "-",
                     color=_FMM_COLOUR, linewidth=1.2, zorder=4)
 
-        # Peak time marker
+        # Marcador de tiempo de pico
         peak = result.peak_times[i]
         ax.axvline(peak, color=_FMM_COLOUR, linestyle=":",
                    linewidth=0.8, alpha=0.6, zorder=3)
 
-        # Colour by day/night
+        # Color por día/noche
         if gene in result.day_genes:
             bg = _DAY_COLOUR
         elif gene in result.night_genes:
@@ -306,7 +306,7 @@ def plot_ordered_profiles(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 3 — R² comparison bar chart
+# Gráfico 3 — Gráfico de barras de comparación de R²
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_r2_comparison(
@@ -315,27 +315,27 @@ def plot_r2_comparison(
     figsize: tuple[float, float] = (7, 4),
 ) -> Figure:
     """
-    Horizontal bar chart of FMM R² for each core gene.
+    Gráfico de barras horizontal del R² FMM para cada gen core.
 
-    Bars are colour-coded by day/night classification.  A vertical
-    dashed line at R²=0.5 marks the conventional threshold for a
-    "good" rhythmic fit.
+    Las barras se codifican por color según la clasificación día/noche. Una línea
+    vertical discontinua en R²=0.5 marca el umbral convencional para un ajuste
+    rítmico "bueno".
 
-    Parameters
+    Parámetros
     ----------
     result : PreliminaryOrderResult
     title : str
     figsize : tuple
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     genes = result.core_genes
     r2 = result.r2_fmm
     n_core = len(genes)
 
-    # Sort by R² descending for readability
+    # Ordenar por R² descendente para mayor legibilidad
     order = np.argsort(r2)[::-1]
 
     fig, ax = plt.subplots(figsize=figsize)
@@ -356,7 +356,7 @@ def plot_r2_comparison(
         ax.barh(rank, val, color=colour, edgecolor="white",
                 linewidth=0.5, height=0.7, zorder=3)
 
-        # Value label
+        # Etiqueta de valor
         ax.text(val + 0.01, rank, f"{val:.3f}", va="center",
                 fontsize=7, zorder=4)
 
@@ -364,7 +364,7 @@ def plot_r2_comparison(
     ax.set_yticklabels([genes[i] for i in order], fontsize=8)
     ax.invert_yaxis()
 
-    # Threshold line
+    # Línea de umbral
     ax.axvline(0.5, color="#999999", linestyle="--", linewidth=0.8,
                zorder=2, label="R\u00b2 = 0.5 threshold")
 
@@ -383,7 +383,7 @@ def plot_r2_comparison(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Plot 4 — Day/night circular sector diagram
+# Gráfico 4 — Diagrama de sectores circulares día/noche
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_day_night_diagram(
@@ -392,24 +392,24 @@ def plot_day_night_diagram(
     figsize: tuple[float, float] = (5.5, 5.5),
 ) -> Figure:
     """
-    Circular sector diagram with day [0, π) and night [π, 2π) halves.
+    Diagrama de sectores circulares con mitades día [0, π) y noche [π, 2π).
 
-    Gene names are placed at their peak phase position on a ring,
-    with day genes in warm orange and night genes in deep purple.
-    ARNTL and DBP are highlighted as the anchor and direction genes.
+    Los nombres de los genes se sitúan en su posición de fase de pico en un anillo,
+    con los genes de día en naranja cálido y los de noche en morado intenso.
+    ARNTL y DBP se resaltan como los genes de anclaje y dirección.
 
-    Purpose: quick visual summary of the circadian programme —
-    which genes are co-expressed and the temporal separation between
-    activators and repressors.
+    Propósito: resumen visual rápido del programa circadiano —
+    qué genes se co-expresan y la separación temporal entre
+    activadores y represores.
 
-    Parameters
+    Parámetros
     ----------
     result : PreliminaryOrderResult
     title : str
     figsize : tuple
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     genes = result.core_genes
@@ -423,17 +423,17 @@ def plot_day_night_diagram(
     ax.set_ylim(-1.6, 1.6)
     ax.axis("off")
 
-    # Draw the two semicircles
-    theta_day = np.linspace(np.pi / 2, -np.pi / 2, 100)  # right half = day [0,π)
-    theta_night = np.linspace(-np.pi / 2, -3 * np.pi / 2, 100)  # left = night
+    # Dibujar los dos semicírculos
+    theta_day = np.linspace(np.pi / 2, -np.pi / 2, 100)  # mitad derecha = día [0,π)
+    theta_night = np.linspace(-np.pi / 2, -3 * np.pi / 2, 100)  # izquierda = noche
 
-    # Map CIRCUST phase to visual angle: visual = π/2 - phase
-    # So phase=0 → top, phase=π/2 → right, phase=π → bottom
+    # Mapear fase CIRCUST a ángulo visual: visual = π/2 - fase
+    # Así: fase=0 → arriba, fase=π/2 → derecha, fase=π → abajo
     def phase_to_xy(phase, radius=1.0):
         visual = np.pi / 2 - phase
         return radius * np.cos(visual), radius * np.sin(visual)
 
-    # Filled semicircles
+    # Semicírculos rellenos
     r = 1.0
     day_arc = np.linspace(0, np.pi, 100)
     night_arc = np.linspace(np.pi, 2 * np.pi, 100)
@@ -446,18 +446,18 @@ def plot_day_night_diagram(
     ax.fill(day_xs, day_ys, color=_DAY_COLOUR, alpha=0.12, zorder=0)
     ax.fill(night_xs, night_ys, color=_NIGHT_COLOUR, alpha=0.12, zorder=0)
 
-    # Outer circle
+    # Círculo exterior
     circle_t = np.linspace(0, 2 * np.pi, 200)
     ax.plot(r * np.cos(circle_t), r * np.sin(circle_t), "-",
             color="#999999", linewidth=0.8, zorder=1)
 
-    # Diameter line (day/night boundary)
+    # Línea de diámetro (límite día/noche)
     x0, y0 = phase_to_xy(0, r)
     xpi, ypi = phase_to_xy(np.pi, r)
     ax.plot([x0, xpi], [y0, ypi], "-", color="#AAAAAA",
             linewidth=0.6, zorder=1)
 
-    # Phase labels
+    # Etiquetas de fase
     ax.text(*phase_to_xy(np.pi / 2, 0.45), "DAY", fontsize=12,
             ha="center", va="center", color=_DAY_COLOUR,
             fontweight="bold", alpha=0.35, zorder=1)
@@ -465,7 +465,7 @@ def plot_day_night_diagram(
             ha="center", va="center", color=_NIGHT_COLOUR,
             fontweight="bold", alpha=0.35, zorder=1)
 
-    # Place genes
+    # Posicionar genes
     label_radius = 1.22
     marker_radius = 1.0
 
@@ -495,7 +495,7 @@ def plot_day_night_diagram(
         ax.plot([0, mx], [0, my], "-", color=colour,
                 linewidth=0.4, alpha=0.3, zorder=2)
 
-        # Smart label alignment
+        # Alineación inteligente de etiquetas
         if abs(lx) < 0.2:
             ha = "center"
         elif lx > 0:
@@ -506,7 +506,7 @@ def plot_day_night_diagram(
         ax.text(lx, ly, gene, fontsize=7.5, fontweight="bold",
                 color=colour, ha=ha, va="center", zorder=6)
 
-    # Phase markers around the edge
+    # Marcadores de fase alrededor del borde
     for phase_val, label in [(0, "0"), (np.pi / 2, "\u03c0/2"),
                               (np.pi, "\u03c0"), (3 * np.pi / 2, "3\u03c0/2")]:
         px, py = phase_to_xy(phase_val, 1.45)

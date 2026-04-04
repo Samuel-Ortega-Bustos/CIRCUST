@@ -2,34 +2,35 @@
 """
 run_pipeline.py
 ===============
-End-to-end execution of the CIRCUST pipeline (Stages 1-2) with full
-diagnostic visualisations.  Supports any expression matrix format
-(CSV, TSV, Parquet, Excel) and configurable core gene sets.
+Ejecución de extremo a extremo del pipeline CIRCUST (Etapas 1-2) con
+visualizaciones diagnósticas completas. Soporta cualquier formato de
+matriz de expresión (CSV, TSV, Parquet, Excel) y conjuntos de genes
+core configurables.
 
-Examples
+Ejemplos
 --------
-    # Default: matrixIn.parquet with Larriba core genes
+    # Por defecto: matrixIn.parquet con genes core de Larriba
     python scripts/run_pipeline.py
 
-    # CSV input (BA46 glutamatergic neurons)
+    # Entrada CSV (neuronas glutamatérgicas BA46)
     python scripts/run_pipeline.py --data data/BA46_glut_sample_no_minmax.csv \\
                                    --label "BA46 glutamatergic"
 
-    # Custom core genes (Zhang et al. 2014 mouse set)
+    # Genes core personalizados (conjunto ratón Zhang et al. 2014)
     python scripts/run_pipeline.py --core-genes ARNTL,DBP,NR1D1,PER1,PER2,PER3
 
-    # Parquet with explicit gene column + publication DPI
+    # Parquet con columna de genes explícita + DPI de publicación
     python scripts/run_pipeline.py --data data/matrixIn.parquet \\
                                    --gene-column gene_id \\
                                    --dpi 300 -o output/pub_run
 
-    # Tuned pipeline parameters
+    # Parámetros del pipeline ajustados
     python scripts/run_pipeline.py --sparse-threshold 0.4 \\
                                    --outlier-uni-threshold 5.0 \\
                                    --fmm-reps 5
 
-Output structure
-----------------
+Estructura de salida
+--------------------
     <output_dir>/
     ├── results/
     │   ├── preprocessing_summary.txt
@@ -63,18 +64,18 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── Ensure the project root is on sys.path ─────────────────────────────────
+# ── Asegurar que la raíz del proyecto está en sys.path ─────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-# ── CIRCUST pipeline imports ────────────────────────────────────────────────
+# ── Importaciones del pipeline CIRCUST ─────────────────────────────────────
 from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
 from circust.outlier import OutlierRefiner
 from circust.preliminary_order import PreliminaryOrderEstimator
 from circust.constants import SEED_GENES_DEFAULT, SEED_GENES_ZHANG
 
-# ── Visualisation imports ───────────────────────────────────────────────────
+# ── Importaciones de visualización ─────────────────────────────────────────
 from circust.visualization import (
     plot_pc_scatter,
     plot_gene_panels,
@@ -92,40 +93,41 @@ from circust.visualization import (
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Configuration — edit this section to change defaults
+# Configuración — editar esta sección para cambiar los valores por defecto
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Named core-gene sets.  Use --core-genes <name> on the CLI,
-# or add your own set here and reference it by name.
+# Conjuntos de genes core con nombre. Usar --core-genes <nombre> en la CLI,
+# o añadir un conjunto propio aquí y referenciarlo por nombre.
 GENE_SETS = {
     "larriba": SEED_GENES_DEFAULT,     # Larriba et al. 2023 (12 genes)
     "zhang":   SEED_GENES_ZHANG,       # Zhang et al. 2014 (10 genes)
 }
 
-# Pipeline parameters — modify here or override via CLI.
+# Parámetros del pipeline — modificar aquí o sobreescribir via CLI.
 DEFAULT_CONFIG = {
-    # Preprocessing
-    "sparse_threshold":       0.3,      # max zero/NaN fraction per gene
+    # Preprocesamiento
+    "sparse_threshold":       0.3,      # fracción máx de ceros/NaN por gen
     # CPCA
-    "n_outlier_candidates":   8,        # near-origin samples to examine
-    "tight_radius":           0.10,     # primary radial threshold
-    "loose_radius":           0.15,     # fallback radial threshold
-    # Outlier detection
-    "outlier_multi_threshold": 3.0,     # |std res| for multivariate
-    "outlier_uni_threshold":   4.0,     # |std res| for univariate
-    "max_outlier_fraction":    0.05,    # cap on removable samples
-    # FMM fitting
-    "fmm_alpha_grid":         48,       # alpha grid resolution
-    "fmm_omega_grid":         24,       # omega grid resolution
-    "fmm_reps":               3,        # grid refinement iterations
-    # Biological anchors
-    "anchor_gene":            "ARNTL",  # gene placed at pi (dawn)
-    "direction_gene":         "DBP",    # gene for direction check
+    "n_outlier_candidates":   8,        # muestras cercanas al origen a examinar
+    "tight_radius":           0.10,     # umbral radial primario
+    "loose_radius":           0.15,     # umbral radial alternativo
+    # Detección de outliers
+    "outlier_multi_threshold": 3.0,     # |res. estand.| multivariante
+    "outlier_uni_threshold":   4.0,     # |res. estand.| univariante
+    "max_outlier_fraction":    0.05,    # límite máximo de muestras eliminables
+    # Ajuste FMM
+    "fmm_alpha_grid":         48,       # resolución de la rejilla alpha
+    "fmm_omega_grid":         24,       # resolución de la rejilla omega
+    "fmm_reps":               3,        # iteraciones de refinamiento de la rejilla
+    # Anclas biológicas
+    "anchor_gene":            "ARNTL",  # gen situado en pi (amanecer)
+    "direction_gene":         "DBP",    # gen para verificación de dirección
 }
 
-# Gene column names per file format.  Parquet files often store gene
-# names in an explicit column; CSV/TSV/Excel use the first column by
-# default.  Add entries here if your files use a different convention.
+# Nombres de columna de genes por formato de archivo. Los ficheros Parquet
+# suelen almacenar nombres de genes en una columna explícita; CSV/TSV/Excel
+# usan la primera columna por defecto. Añadir entradas aquí si los archivos
+# usan una convención diferente.
 _GENE_COL_DEFAULTS = {
     ".parquet": "gene_id",
     ".csv":     None,       # None → first column is the index
@@ -137,20 +139,20 @@ _GENE_COL_DEFAULTS = {
 
 
 def _resolve_gene_column(data_path: Path, override: str | None) -> str | None:
-    """Auto-detect gene_column from file extension, with optional override."""
+    """Detectar automáticamente gene_column por extensión de archivo, con sobreescritura opcional."""
     if override is not None:
         return override
     return _GENE_COL_DEFAULTS.get(data_path.suffix.lower(), None)
 
 
 def _resolve_core_genes(raw: str | None) -> list[str]:
-    """Parse --core-genes into a list of gene symbols."""
+    """Convertir --core-genes en una lista de símbolos de genes."""
     if raw is None:
         return list(SEED_GENES_DEFAULT)
-    # Named set?
+    # ¿Conjunto con nombre?
     if raw.lower() in GENE_SETS:
         return list(GENE_SETS[raw.lower()])
-    # Comma-separated list
+    # Lista separada por comas
     genes = [g.strip() for g in raw.split(",") if g.strip()]
     if len(genes) < 2:
         raise ValueError(
@@ -161,61 +163,61 @@ def _resolve_core_genes(raw: str | None) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the CIRCUST pipeline (Stages 1-2) with diagnostics.",
+        description="Ejecutar el pipeline CIRCUST (Etapas 1-2) con diagnósticos.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
-examples:
-  # Default (matrixIn.parquet, Larriba 12 core genes)
+ejemplos:
+  # Por defecto (matrixIn.parquet, 12 genes core de Larriba)
   python scripts/run_pipeline.py
 
-  # CSV input — gene column auto-detected
+  # Entrada CSV — columna de genes detectada automáticamente
   python scripts/run_pipeline.py --data data/BA46_glut_sample_no_minmax.csv
 
-  # Named gene set
+  # Conjunto de genes con nombre
   python scripts/run_pipeline.py --core-genes zhang
 
-  # Custom gene list
+  # Lista de genes personalizada
   python scripts/run_pipeline.py --core-genes PER1,PER2,CRY1,CRY2,ARNTL,DBP
 
-available gene sets: {list(GENE_SETS.keys())}
+conjuntos de genes disponibles: {list(GENE_SETS.keys())}
 """,
     )
     parser.add_argument(
         "--data", type=str, default=None,
-        help="Path to expression matrix (CSV, TSV, Parquet, Excel). "
-             "Default: data/matrixIn.parquet",
+        help="Ruta a la matriz de expresión (CSV, TSV, Parquet, Excel). "
+             "Por defecto: data/matrixIn.parquet",
     )
     parser.add_argument(
         "--gene-column", type=str, default=None,
-        help="Gene identifier column name. Auto-detected from file "
-             "extension if omitted (Parquet → 'gene_id', CSV → first col).",
+        help="Nombre de la columna identificadora de genes. Se detecta "
+             "automáticamente por extensión si se omite (Parquet → 'gene_id', CSV → primera col).",
     )
     parser.add_argument(
         "--core-genes", type=str, default=None,
-        help=f"Core genes: a named set {list(GENE_SETS.keys())} or "
-             "comma-separated symbols. Default: larriba",
+        help=f"Genes core: un conjunto con nombre {list(GENE_SETS.keys())} o "
+             "símbolos separados por comas. Por defecto: larriba",
     )
     parser.add_argument(
         "--label", type=str, default=None,
-        help="Dataset label for plot titles. Default: filename stem.",
+        help="Etiqueta del dataset para los títulos de los gráficos. Por defecto: nombre del archivo.",
     )
     parser.add_argument(
         "-o", "--output", type=str, default="output",
-        help="Output directory. Default: output/",
+        help="Directorio de salida. Por defecto: output/",
     )
     parser.add_argument(
         "--dpi", type=int, default=150,
-        help="Figure resolution. Default: 150",
+        help="Resolución de las figuras. Por defecto: 150",
     )
     parser.add_argument(
         "--no-plots", action="store_true",
-        help="Skip plot generation (text/CSV results only).",
+        help="Omitir la generación de gráficos (solo resultados en texto/CSV).",
     )
     return parser.parse_args()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Helpers
+# Funciones auxiliares
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _banner(msg: str) -> None:
@@ -239,7 +241,7 @@ def _save_text(text: str, path: Path) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Pipeline
+# Pipeline principal
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
@@ -247,7 +249,7 @@ def main() -> None:
     cfg = DEFAULT_CONFIG.copy()
     t_start = time.time()
 
-    # ── Resolve inputs ───────────────────────────────────────────────────
+    # ── Resolver entradas ────────────────────────────────────────────────
     data_path = Path(args.data) if args.data else (PROJECT_ROOT / "data" / "matrixIn.parquet")
     gene_column = _resolve_gene_column(data_path, args.gene_column)
     core_genes = _resolve_core_genes(args.core_genes)
@@ -261,28 +263,28 @@ def main() -> None:
     if not args.no_plots:
         figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Print configuration ──────────────────────────────────────────────
-    _banner("Configuration")
-    print(f"  Data file    : {data_path}")
-    print(f"  Gene column  : {gene_column or '(first column)'}")
-    print(f"  Core genes   : {core_genes}")
-    print(f"  Anchor gene  : {cfg['anchor_gene']}")
-    print(f"  Direction    : {cfg['direction_gene']}")
-    print(f"  Label        : {label}")
-    print(f"  Output       : {output_dir}")
+    # ── Mostrar configuración ────────────────────────────────────────────
+    _banner("Configuración")
+    print(f"  Archivo de datos : {data_path}")
+    print(f"  Columna genes    : {gene_column or '(primera columna)'}")
+    print(f"  Genes core       : {core_genes}")
+    print(f"  Gen ancla        : {cfg['anchor_gene']}")
+    print(f"  Gen dirección    : {cfg['direction_gene']}")
+    print(f"  Etiqueta         : {label}")
+    print(f"  Salida           : {output_dir}")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 0 — Load data
+    # Etapa 0 — Cargar datos
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Stage 0: Loading expression matrix")
+    _banner("Etapa 0: Cargando matriz de expresión")
 
     raw_matrix = load_expression_matrix(str(data_path), gene_column=gene_column)
-    print(f"  Loaded: {raw_matrix.shape[0]} genes x {raw_matrix.shape[1]} samples")
+    print(f"  Cargado: {raw_matrix.shape[0]} genes x {raw_matrix.shape[1]} muestras")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 1.0 — Preprocessing
+    # Etapa 1.0 — Preprocesamiento
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Stage 1.0: Preprocessing")
+    _banner("Etapa 1.0: Preprocesamiento")
 
     preprocessor = Preprocessor(
         sparse_threshold=cfg["sparse_threshold"],
@@ -293,9 +295,9 @@ def main() -> None:
     _save_text(prep.summary(), results_dir / "preprocessing_summary.txt")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 1.1 — CPCA (initial circular ordering)
+    # Etapa 1.1 — CPCA (ordenamiento circular inicial)
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Stage 1.1: Circular PCA")
+    _banner("Etapa 1.1: PCA Circular")
 
     cpca = CPCA(
         core_genes=core_genes,
@@ -309,7 +311,7 @@ def main() -> None:
     _save_text(cpca_result.summary(), results_dir / "cpca_summary.txt")
 
     if not args.no_plots:
-        print("  Generating CPCA plots ...")
+        print("  Generando gráficos CPCA ...")
 
         fig = plot_variance_explained(cpca_result, title=label)
         _save_figure(fig, figures_dir / "01_variance_explained.png", args.dpi)
@@ -321,9 +323,9 @@ def main() -> None:
         _save_figure(fig, figures_dir / "03_cpca_gene_panels.png", args.dpi)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 1.2 — Outlier refinement
+    # Etapa 1.2 — Refinamiento de outliers
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Stage 1.2: Outlier Refinement")
+    _banner("Etapa 1.2: Refinamiento de Outliers")
 
     refiner = OutlierRefiner(
         multi_threshold=cfg["outlier_multi_threshold"],
@@ -339,7 +341,7 @@ def main() -> None:
     _save_text(outlier_result.summary(), results_dir / "outlier_summary.txt")
 
     if not args.no_plots:
-        print("  Generating outlier diagnostic plots ...")
+        print("  Generando gráficos diagnósticos de outliers ...")
 
         fig = plot_core_gene_fits(outlier_result, cpca_initial=cpca_result, title=label)
         _save_figure(fig, figures_dir / "04_core_gene_fits.png", args.dpi)
@@ -351,9 +353,9 @@ def main() -> None:
         _save_figure(fig, figures_dir / "06_residual_heatmap.png", args.dpi)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Stage 2 — Preliminary ordering
+    # Etapa 2 — Ordenamiento preliminar
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Stage 2: Preliminary Circular Ordering")
+    _banner("Etapa 2: Ordenamiento Circular Preliminar")
 
     core_genes_found = list(outlier_result.cpca_final.core_genes_found)
     estimator = PreliminaryOrderEstimator(
@@ -365,7 +367,7 @@ def main() -> None:
 
     _save_text(order_result.summary(), results_dir / "preliminary_order_summary.txt")
 
-    # ── Export key results as CSV ────────────────────────────────────────
+    # ── Exportar resultados clave como CSV ──────────────────────────────
     peak_df = pd.DataFrame({
         "gene": order_result.core_genes,
         "peak_phase": order_result.peak_times,
@@ -397,7 +399,7 @@ def main() -> None:
     print(f"    Saved: sample_order.csv")
 
     if not args.no_plots:
-        print("  Generating ordering plots ...")
+        print("  Generando gráficos de ordenamiento ...")
 
         fig = plot_circular_peaks(order_result, title=label)
         _save_figure(fig, figures_dir / "07_circular_peaks.png", args.dpi)
@@ -421,10 +423,10 @@ def main() -> None:
         _save_figure(fig, figures_dir / "11_expression_heatmap.png", args.dpi)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Composite summary
+    # Resumen compuesto
     # ─────────────────────────────────────────────────────────────────────
     if not args.no_plots:
-        _banner("Generating pipeline summary figure")
+        _banner("Generando figura resumen del pipeline")
 
         fig = plot_pipeline_summary(
             cpca_result, outlier_result, order_result,
@@ -433,23 +435,23 @@ def main() -> None:
         _save_figure(fig, figures_dir / "12_pipeline_summary.png", args.dpi)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Final report
+    # Informe final
     # ─────────────────────────────────────────────────────────────────────
     elapsed = time.time() - t_start
 
-    _banner("Pipeline complete")
-    print(f"  Dataset         : {data_path.name}")
-    print(f"  Genes (input)   : {prep.n_genes_in}")
-    print(f"  Genes (filtered): {prep.n_genes_out}")
-    print(f"  Samples (clean) : {outlier_result.expr_norm_final.shape[1]}")
-    print(f"  Outliers removed: {len(outlier_result.samples_dropped)}")
-    print(f"  Direction flip  : {order_result.direction_flipped}")
-    print(f"  Output          : {output_dir.resolve()}")
-    print(f"  Elapsed time    : {elapsed:.1f}s")
+    _banner("Pipeline completado")
+    print(f"  Dataset            : {data_path.name}")
+    print(f"  Genes (entrada)    : {prep.n_genes_in}")
+    print(f"  Genes (filtrados)  : {prep.n_genes_out}")
+    print(f"  Muestras (limpias) : {outlier_result.expr_norm_final.shape[1]}")
+    print(f"  Outliers eliminados: {len(outlier_result.samples_dropped)}")
+    print(f"  Inversión direcc.  : {order_result.direction_flipped}")
+    print(f"  Salida             : {output_dir.resolve()}")
+    print(f"  Tiempo transcurrido: {elapsed:.1f}s")
     print()
 
-    # Print core gene peak summary
-    print("  Core gene peaks (biological frame):")
+    # Resumen de picos de genes core
+    print("  Picos de genes core (marco biológico):")
     print("  " + "-" * 44)
     for i, gene in enumerate(order_result.core_genes):
         phase = order_result.peak_times[i]

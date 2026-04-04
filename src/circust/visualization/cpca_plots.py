@@ -40,7 +40,7 @@ import matplotlib.patches as mpatches
 from matplotlib.figure import Figure
 
 # ---------------------------------------------------------------------------
-# Colour palette — one colour per outlier, matching R's col=i convention
+# Paleta de colores — un color por outlier, equivalente a col=i en R
 # ---------------------------------------------------------------------------
 _OUTLIER_COLOURS = [
     "#E41A1C",  # red
@@ -70,35 +70,34 @@ def plot_pc_scatter(
     show_loose_circle: bool = True,
 ) -> Figure:
     """
-    Scatter of PC1 vs PC2 loadings (one point per sample).
+    Diagrama de dispersión PC1 vs PC2 (un punto por muestra).
 
-    Features
-    --------
-    - Concentric dashed threshold circles at r=0.10, 0.15, 0.20
-      (and 0.30 / 0.40 when the data extends that far).
-    - Outlier candidates marked with open squares in distinct colours.
-    - Confirmed outliers get a filled marker on top.
-    - The active radius circle (tight=0.10, or loose=0.15 if rojo8)
-      is drawn in red; all others are grey.
-    - Axis limits are symmetric and driven by the data range.
-    - Variance explained shown in the axis labels.
+    Características
+    ---------------
+    - Círculos umbral concéntricos discontinuos en r=0.10, 0.15, 0.20
+      (y 0.30 / 0.40 cuando los datos se extienden hasta ahí).
+    - Candidatos a outlier marcados con cuadrados abiertos de colores distintos.
+    - Los outliers confirmados llevan un marcador relleno encima.
+    - El círculo de radio activo (ajustado=0.10, o holgado=0.15 si rojo8)
+      se dibuja en rojo; el resto en gris.
+    - Los límites de los ejes son simétricos y determinados por el rango de datos.
+    - La varianza explicada se muestra en las etiquetas de los ejes.
 
-    Parameters
+    Parámetros
     ----------
     result : CPCAResult
-        Output of CPCA.run().
+        Salida de CPCA.run().
     title : str
-        Dataset / tissue label shown in the plot title.
+        Etiqueta de dataset/tejido mostrada en el título.
     figsize : tuple
-        Figure size in inches (width, height).
+        Tamaño de la figura en pulgadas (ancho, alto).
     point_size : float
-        Marker area for regular samples (matplotlib `s` parameter).
+        Área del marcador para muestras normales (parámetro `s` de matplotlib).
     show_loose_circle : bool
-        Whether to always draw both threshold circles even when only
-        the tight one was used.
+        Si se deben dibujar ambos círculos umbral aunque solo se usara el ajustado.
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
     """
     pc1  = result.pc1
@@ -108,14 +107,14 @@ def plot_pc_scatter(
     conf = result.outlier_idx
     used_loose = result.used_loose_radius
 
-    # Axis limits — symmetric, slightly padded, driven by data
+    # Límites de ejes — simétricos, con pequeño margen, determinados por los datos
     maxi = round(max(np.abs(pc1).max(), np.abs(pc2).max()), 1) + 0.05
     maxi = max(maxi, 0.22)   # always show at least the 0.20 circle
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_aspect("equal")
 
-    # ── Background circles ──────────────────────────────────────────────────
+    # ── Círculos de fondo ──────────────────────────────────────────────────
     theta = np.linspace(0, 2 * np.pi, 360)
     cos_t, sin_t = np.cos(theta), np.sin(theta)
 
@@ -137,12 +136,12 @@ def plot_pc_scatter(
                 ha="center", va="bottom",
                 fontsize=6, color=colour, zorder=2)
 
-    # ── All samples (grey) ──────────────────────────────────────────────────
+    # ── Todas las muestras (gris) ──────────────────────────────────────────────────
     ax.scatter(pc1, pc2,
                s=point_size, color="#CCCCCC", edgecolors="#999999",
                linewidths=0.4, zorder=3, label="samples")
 
-    # ── Outlier candidates (open coloured squares) ──────────────────────────
+    # ── Candidatos a outlier (cuadrados coloreados abiertos) ──────────────────────────
     conf_set = set(conf.tolist())
     for rank, idx in enumerate(cand):
         col = _outlier_colour(rank)
@@ -153,11 +152,11 @@ def plot_pc_scatter(
                    facecolors=facecolor, edgecolors=col,
                    linewidths=1.5, zorder=5)
 
-    # ── Legend entries for outliers ─────────────────────────────────────────
+    # ── Entradas de leyenda para outliers ─────────────────────────────────────────
     if len(conf) > 0:
         handles = []
         for rank, idx in enumerate(conf):
-            # find position of idx in cand to get the colour rank
+            # buscar la posición de idx en cand para obtener el rango de color
             cand_rank = np.where(cand == idx)[0]
             rank_used = int(cand_rank[0]) if len(cand_rank) > 0 else rank
             col = _outlier_colour(rank_used)
@@ -167,11 +166,11 @@ def plot_pc_scatter(
         ax.legend(handles=handles, fontsize=7, loc="upper right",
                   framealpha=0.7)
 
-    # ── Origin crosshairs ───────────────────────────────────────────────────
+    # ── Líneas de origen ───────────────────────────────────────────────────
     ax.axhline(0, color="#DDDDDD", linewidth=0.6, zorder=0)
     ax.axvline(0, color="#DDDDDD", linewidth=0.6, zorder=0)
 
-    # ── Labels & title ──────────────────────────────────────────────────────
+    # ── Etiquetas y título ──────────────────────────────────────────────────────
     ax.set_xlim(-maxi, maxi)
     ax.set_ylim(-maxi, maxi)
     ax.set_xlabel(
@@ -202,33 +201,33 @@ def plot_gene_panels(
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
     """
-    Grid of expression traces for each core clock gene, ordered by phi.
+    Cuadrícula de trazas de expresión por gen reloj core, ordenadas por phi.
 
-    Layout
-    ------
-    - One subplot per core gene (expression vs circular phase).
-    - Three additional subplots at the end: PC1, PC2, PC3 eigengene traces.
-    - Outlier samples marked with coloured open squares in every panel.
-    - Grid size is the smallest square that fits all panels.
+    Disposición
+    -----------
+    - Un subgráfico por gen core (expresión vs fase circular).
+    - Tres subgráficos adicionales al final: trazas de eigengenes PC1, PC2, PC3.
+    - Las muestras outlier se marcan con cuadrados abiertos coloreados en cada panel.
+    - El tamaño de la cuadrícula es el cuadrado más pequeño que cabe todos los paneles.
 
-    Parameters
+    Parámetros
     ----------
     result : CPCAResult
-        Must have been produced by a CPCA instance that stored
-        ``core_matrix`` (set store_core_matrix=True, which is the default).
+        Debe haber sido producido por una instancia de CPCA que almacenó
+        ``core_matrix`` (store_core_matrix=True, que es el valor por defecto).
     title : str
-        Suptitle label.
-    figsize : tuple, optional
-        Figure size. Auto-computed from grid dimensions if not given.
+        Etiqueta del suptítulo.
+    figsize : tuple, opcional
+        Tamaño de la figura. Se calcula automáticamente de las dimensiones de la cuadrícula si no se proporciona.
 
-    Returns
-    -------
+    Devuelve
+    --------
     matplotlib.figure.Figure
 
-    Raises
-    ------
+    Lanza
+    -----
     AttributeError
-        If result.core_matrix is None (CPCA was run with store_core_matrix=False).
+        Si result.core_matrix es None (CPCA ejecutado con store_core_matrix=False).
     """
     if result.core_matrix is None:
         raise AttributeError(
@@ -245,12 +244,12 @@ def plot_gene_panels(
     pc1, pc2, pc3 = result.pc1, result.pc2, result.pc3
     var           = result.variance_explained
 
-    # Number of panels: one per gene + three eigengene panels
+    # Número de paneles: uno por gen + tres paneles de eigengenes
     n_gene_panels  = len(genes)
     n_eigen_panels = 3
     n_panels       = n_gene_panels + n_eigen_panels
 
-    # Square-ish grid (same logic as R's compPerfSq)
+    # Cuadrícula aproximadamente cuadrada (misma lógica que compPerfSq en R)
     ncols = math.ceil(math.sqrt(n_panels))
     nrows = math.ceil(n_panels / ncols)
 
@@ -260,20 +259,20 @@ def plot_gene_panels(
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     axes_flat = axes.flatten()
 
-    # Ordered expression and eigengenes
-    # core_matrix may be a DataFrame (gene index × sample columns) — use .iloc
+    # Expresión y eigengenes ordenados
+    # core_matrix puede ser un DataFrame (índice de genes × columnas de muestras) — usar .iloc
     cm = core_matrix.values if hasattr(core_matrix, 'values') else core_matrix
     core_ordered = cm[:, order]          # (n_genes, n_samples) sorted
     pc1_ordered  = pc1[order]
     pc2_ordered  = pc2[order]
     pc3_ordered  = pc3[order]
 
-    # Outlier colours indexed by their rank in outlier_positions_in_order
-    # outs_pos contains positions within order — same rank logic as R's col=i
+    # Colores de outliers indexados por su rango en outlier_positions_in_order
+    # outs_pos contiene posiciones dentro de order — misma lógica de rango que col=i en R
     outlier_phi_positions = outs_pos  # positions in [0..n_samples-1] in ordered space
 
     def _add_outlier_marks(ax, y_values):
-        """Mark outlier positions in a panel with coloured squares."""
+        """Marcar posiciones de outliers en un panel con cuadrados coloreados."""
         for rank, pos in enumerate(outlier_phi_positions):
             if 0 <= pos < len(phi):
                 col = _outlier_colour(rank)
@@ -282,7 +281,7 @@ def plot_gene_panels(
                            facecolors="none", edgecolors=col,
                            linewidths=1.5, zorder=5)
 
-    # ── Gene expression panels ───────────────────────────────────────────────
+    # ── Paneles de expresión génica ───────────────────────────────────────────────
     for i, gene in enumerate(genes):
         ax = axes_flat[i]
         y  = core_ordered[i]
@@ -294,7 +293,7 @@ def plot_gene_panels(
                        bottom=False, left=False)
         ax.spines[["top", "right"]].set_visible(False)
 
-    # ── PC eigengene panels ──────────────────────────────────────────────────
+    # ── Paneles de eigengenes PC ──────────────────────────────────────────────────
     eigen_panels = [
         (pc1_ordered, f"PC1  ({var[0]*100:.1f}% var)"),
         (pc2_ordered, f"PC2  ({var[1]*100:.1f}% var)"),
@@ -311,11 +310,11 @@ def plot_gene_panels(
                        bottom=False, left=False)
         ax.spines[["top", "right"]].set_visible(False)
 
-    # ── Hide unused axes ─────────────────────────────────────────────────────
+    # ── Ocultar ejes no usados ─────────────────────────────────────────────────────
     for ax in axes_flat[n_panels:]:
         ax.set_visible(False)
 
-    # ── Shared x-label on bottom row ────────────────────────────────────────
+    # ── Etiqueta x compartida en la fila inferior ────────────────────────────────────────
     fig.text(0.5, 0.01, "Circular phase φ  (0 → 2π)", ha="center", fontsize=9)
 
     suptitle = f"{title}  — " if title else ""
