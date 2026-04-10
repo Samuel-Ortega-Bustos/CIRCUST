@@ -342,12 +342,12 @@ class RobustEstimator:
                 phiC_rot = (phiC - arntl_peak_raw + pi) % (2.0 * pi)
                 if not orientation_changed:
                     pars_cos = (Mc, Ac, phiC_rot)
-                    pk1 = (-phiC_rot) % (2*pi)
-                    pk2 = (pi - phiC_rot) % (2*pi)
+                    pk1 = phiC_rot % (2*pi)
+                    pk2 = (phiC_rot + pi) % (2*pi)
                 else:
                     pars_cos = (Mc, Ac, (2.0*pi - phiC_rot) % (2.0*pi))
-                    pk1 = (-phiC) % (2*pi)
-                    pk2 = (pi - phiC) % (2*pi)
+                    pk1 = phiC % (2*pi)
+                    pk2 = (phiC + pi) % (2*pi)
                 peaks_cos = (pk1, pk2, pk1/(2*pi)*100, pk2/(2*pi)*100)
                 fitted_cos = cr.fitted
                 resid_c = vvv - fitted_cos

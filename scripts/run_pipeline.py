@@ -73,7 +73,13 @@ from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
 from circust.outlier import OutlierRefiner
 from circust.preliminary_order import PreliminaryOrderEstimator
-from circust.constants import SEED_GENES_DEFAULT, SEED_GENES_ZHANG
+from circust.nonparametric import NonParametricScorer
+from circust.candidate_selection import CandidateSelector
+from circust.reference_set import ReferenceSetBuilder
+from circust.random_selection import RandomSelector
+from circust.top_matrix import build_top_matrix
+from circust.robust_estimation import RobustEstimator
+from circust.core_genes import CoreGeneSelector
 
 # ── Importaciones de visualización ─────────────────────────────────────────
 from circust.visualization import (
@@ -95,13 +101,6 @@ from circust.visualization import (
 # ═══════════════════════════════════════════════════════════════════════════
 # Configuración — editar esta sección para cambiar los valores por defecto
 # ═══════════════════════════════════════════════════════════════════════════
-
-# Conjuntos de genes core con nombre. Usar --core-genes <nombre> en la CLI,
-# o añadir un conjunto propio aquí y referenciarlo por nombre.
-GENE_SETS = {
-    "larriba": SEED_GENES_DEFAULT,     # Larriba et al. 2023 (12 genes)
-    "zhang":   SEED_GENES_ZHANG,       # Zhang et al. 2014 (10 genes)
-}
 
 # Parámetros del pipeline — modificar aquí o sobreescribir via CLI.
 DEFAULT_CONFIG = {
@@ -145,21 +144,6 @@ def _resolve_gene_column(data_path: Path, override: str | None) -> str | None:
     return _GENE_COL_DEFAULTS.get(data_path.suffix.lower(), None)
 
 
-def _resolve_core_genes(raw: str | None) -> list[str]:
-    """Convertir --core-genes en una lista de símbolos de genes."""
-    if raw is None:
-        return list(SEED_GENES_DEFAULT)
-    # ¿Conjunto con nombre?
-    if raw.lower() in GENE_SETS:
-        return list(GENE_SETS[raw.lower()])
-    # Lista separada por comas
-    genes = [g.strip() for g in raw.split(",") if g.strip()]
-    if len(genes) < 2:
-        raise ValueError(
-            f"--core-genes requires at least 2 genes, got: {genes}"
-        )
-    return genes
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -179,7 +163,7 @@ ejemplos:
   # Lista de genes personalizada
   python scripts/run_pipeline.py --core-genes PER1,PER2,CRY1,CRY2,ARNTL,DBP
 
-conjuntos de genes disponibles: {list(GENE_SETS.keys())}
+conjuntos de genes disponibles: {list(CoreGeneSelector.PRESETS.keys())}
 """,
     )
     parser.add_argument(
@@ -194,7 +178,7 @@ conjuntos de genes disponibles: {list(GENE_SETS.keys())}
     )
     parser.add_argument(
         "--core-genes", type=str, default=None,
-        help=f"Genes core: un conjunto con nombre {list(GENE_SETS.keys())} o "
+        help=f"Genes core: un conjunto con nombre {list(CoreGeneSelector.PRESETS.keys())} o "
              "símbolos separados por comas. Por defecto: larriba",
     )
     parser.add_argument(
@@ -251,9 +235,9 @@ def main() -> None:
 
     # ── Resolver entradas ────────────────────────────────────────────────
     data_path = Path(args.data) if args.data else (PROJECT_ROOT / "data" / "matrixIn.parquet")
-    gene_column = _resolve_gene_column(data_path, args.gene_column)
-    core_genes = _resolve_core_genes(args.core_genes)
-    label = args.label if args.label else data_path.stem
+    gene_column    = _resolve_gene_column(data_path, args.gene_column)
+    core_selector  = CoreGeneSelector.from_string(args.core_genes)
+    label          = args.label if args.label else data_path.stem
 
     output_dir = Path(args.output)
     results_dir = output_dir / "results"
@@ -267,7 +251,7 @@ def main() -> None:
     _banner("Configuración")
     print(f"  Archivo de datos : {data_path}")
     print(f"  Columna genes    : {gene_column or '(primera columna)'}")
-    print(f"  Genes core       : {core_genes}")
+    print(f"  Preset genes core: {core_selector._preset_name}")
     print(f"  Gen ancla        : {cfg['anchor_gene']}")
     print(f"  Gen dirección    : {cfg['direction_gene']}")
     print(f"  Etiqueta         : {label}")
@@ -293,6 +277,14 @@ def main() -> None:
     prep = preprocessor.run(raw_matrix)
 
     _save_text(prep.summary(), results_dir / "preprocessing_summary.txt")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 1.1a — Seleccion de genes core
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 1.1a: Seleccion de Genes Core")
+
+    core_result = core_selector.select(prep.expr_norm)
+    core_genes  = core_result.genes
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 1.1 — CPCA (ordenamiento circular inicial)
@@ -398,6 +390,180 @@ def main() -> None:
     order_df.to_csv(results_dir / "sample_order.csv", index=False)
     print(f"    Saved: sample_order.csv")
 
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 3.1 — Puntuación de ritmicidad no paramétrica (PAVA)
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 3.1: Puntuación de Ritmicidad No Paramétrica")
+
+    np_scorer = NonParametricScorer(verbose=True)
+    np_result = np_scorer.run(order_result.expr_ordered)
+
+    _save_text(np_result.summary(), results_dir / "nonparametric_summary.txt")
+
+    np_df = pd.DataFrame({
+        "gene":   np_result.gene_names,
+        "r2_np":  np_result.r2,
+        "mse_np": np_result.mse_np,
+    }).sort_values("r2_np", ascending=False)
+    np_df.to_csv(results_dir / "nonparametric_r2.csv", index=False)
+    print(f"    Saved: nonparametric_r2.csv")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 3.2 — Selección de genes candidatos por sectores circulares
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 3.2: Selección de Genes Candidatos")
+
+    candidate_selector = CandidateSelector(
+        tam=50,
+        omega_min=0.1,
+        r2_par_floor=0.4,
+        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid=cfg["fmm_omega_grid"],
+        fmm_num_reps=cfg["fmm_reps"],
+        verbose=True,
+    )
+    candidate_result = candidate_selector.run(
+        r2_np          = np_result.r2,
+        expr_norm      = order_result.expr_ordered,
+        circular_scale = order_result.circular_scale,
+        r2_par_core    = order_result.r2_fmm,
+    )
+
+    _save_text(candidate_result.summary(), results_dir / "candidate_summary.txt")
+
+    cand_df = pd.DataFrame({
+        "gene":     candidate_result.gene_names,
+        "sector":   candidate_result.sector_labels,
+        "fmm_peak": candidate_result.fmm_peaks,
+        "r2_par":   candidate_result.r2_par,
+    }).sort_values(["sector", "r2_par"], ascending=[True, False])
+    cand_df.to_csv(results_dir / "candidate_genes.csv", index=False)
+    print(f"    Saved: candidate_genes.csv")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 3.3 / 3.4 — Conjunto de referencia mínimo
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 3.3 / 3.4: Conjunto de Referencia Mínimo")
+
+    refset_builder = ReferenceSetBuilder(
+        arntl_gene=cfg["anchor_gene"],
+        dbp_gene=cfg["direction_gene"],
+        verbose=True,
+    )
+    refset_result = refset_builder.run(
+        candidate      = candidate_result,
+        expr_full_norm = order_result.expr_ordered,
+        circular_scale = order_result.circular_scale,
+        sample_order   = order_result.sample_order,
+        r2_np_all      = np_result.r2,
+        gene_names_all = np_result.gene_names,
+    )
+
+    _save_text(refset_result.summary(), results_dir / "reference_set_summary.txt")
+    pd.DataFrame({
+        "gene":     refset_result.gene_names,
+        "sector":   refset_result.sector_labels,
+        "fmm_peak": refset_result.fmm_peaks,
+        "r2_par":   refset_result.r2_par,
+    }).to_csv(results_dir / "reference_set.csv", index=False)
+    print(f"    Saved: reference_set.csv")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 3.5 / 3.6 — Selección aleatoria controlada
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 3.5 / 3.6: Selección Aleatoria Controlada")
+
+    random_selector = RandomSelector(
+        n_reps=5,
+        sample_size_fraction=2.0 / 3.0,
+        r2_min=0.5,
+        max_attempts=5000,
+        arntl_gene=cfg["anchor_gene"],
+        dbp_gene=cfg["direction_gene"],
+        seed=42,
+        verbose=True,
+    )
+    random_result = random_selector.run(
+        reference      = refset_result,
+        expr_full_norm = order_result.expr_ordered,
+    )
+
+    _save_text(random_result.summary(), results_dir / "random_selection_summary.txt")
+    sel_df_rows = []
+    for k in range(random_result.selection_indices.shape[0]):
+        for j in range(random_result.selection_indices.shape[1]):
+            sel_df_rows.append({
+                "rep":      k + 1,
+                "gene":     random_result.selection_names[k, j],
+                "fmm_peak": random_result.selection_fmm_peaks[k, j],
+                "r2_par":   random_result.selection_r2[k, j],
+            })
+    pd.DataFrame(sel_df_rows).to_csv(
+        results_dir / "random_selections.csv", index=False
+    )
+    print(f"    Saved: random_selections.csv")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 3.7 — Construcción de la matriz TOP
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 3.7: Matriz TOP (cores + candidatos)")
+
+    top_matrix = build_top_matrix(
+        core_genes         = core_genes_found,
+        candidate_names    = refset_result.gene_names,
+        expr_full_norm     = order_result.expr_ordered,
+        candidate_norm_ord = refset_result.candidate_matrix,
+        sample_order       = np.arange(order_result.expr_ordered.shape[1]),
+        genes_to_exclude   = refset_result.added_genes,
+    )
+    print(f"  Matriz TOP: {top_matrix.shape[0]} genes x {top_matrix.shape[1]} muestras")
+    top_matrix.to_csv(results_dir / "top_matrix.csv")
+    print(f"    Saved: top_matrix.csv")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Etapa 4 — Estimación robusta
+    # ─────────────────────────────────────────────────────────────────────
+    _banner("Etapa 4: Estimación Robusta")
+
+    robust_est = RobustEstimator(
+        arntl_gene=cfg["anchor_gene"],
+        dbp_gene=cfg["direction_gene"],
+        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid=cfg["fmm_omega_grid"],
+        fmm_num_reps=cfg["fmm_reps"],
+        verbose=True,
+    )
+    robust_result = robust_est.run(
+        random_selection = random_result,
+        top_matrix       = top_matrix,
+        expr_full_norm   = order_result.expr_ordered,
+        core_genes       = core_genes_found,
+    )
+
+    _save_text(robust_result.summary(), results_dir / "robust_estimation_summary.txt")
+    pd.DataFrame({
+        "sample_position": np.arange(len(robust_result.consensus_phase)),
+        "consensus_phase": robust_result.consensus_phase,
+    }).to_csv(results_dir / "robust_consensus_phase.csv", index=False)
+    print(f"    Saved: robust_consensus_phase.csv")
+
+    stats_cols = (
+        ["fmm_M","fmm_A","fmm_alpha","fmm_beta","fmm_omega",
+         "fmm_pkU","fmm_pkL","fmm_pkU_pct","fmm_pkL_pct",
+         "fmm_s","fmm_mse","fmm_r2",
+         "cos_M","cos_A","cos_phi",
+         "cos_pk1","cos_pk2","cos_pk1_pct","cos_pk2_pct",
+         "cos_s","cos_mse","cos_r2",
+         "np_s","np_mse","np_r2"]
+    )
+    K = robust_result.sample_orders.shape[0]
+    n_top = len(robust_result.top_gene_names)
+    stats_df = pd.DataFrame(robust_result.stats_table, columns=stats_cols)
+    stats_df.insert(0, "gene", np.tile(robust_result.top_gene_names, K))
+    stats_df.insert(0, "rep",  np.repeat(np.arange(1, K + 1), n_top))
+    stats_df.to_csv(results_dir / "robust_stats_table.csv", index=False)
+    print(f"    Saved: robust_stats_table.csv")
+
     if not args.no_plots:
         print("  Generando gráficos de ordenamiento ...")
 
@@ -446,6 +612,11 @@ def main() -> None:
     print(f"  Muestras (limpias) : {outlier_result.expr_norm_final.shape[1]}")
     print(f"  Outliers eliminados: {len(outlier_result.samples_dropped)}")
     print(f"  Inversión direcc.  : {order_result.direction_flipped}")
+    print(f"  Mediana R² NP      : {float(np.median(np_result.r2)):.3f}")
+    print(f"  Genes candidatos   : {len(candidate_result.gene_names)}")
+    print(f"  Conjunto referencia: {len(refset_result.gene_names)}")
+    print(f"  Repeticiones K     : {robust_result.sample_orders.shape[0]}")
+    print(f"  Flips de orient.   : {int(robust_result.direction_flipped.sum())}")
     print(f"  Salida             : {output_dir.resolve()}")
     print(f"  Tiempo transcurrido: {elapsed:.1f}s")
     print()

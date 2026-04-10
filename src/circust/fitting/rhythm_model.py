@@ -55,7 +55,7 @@ class FitResult:
 
     peak_time : float
         Tiempo de pico en [0, 2*pi), precalculado por el modelo al hacer fit().
-        Cosinor: -phi mod 2*pi.
+        Cosinor: phi mod 2*pi  (phi es directamente el tiempo de pico).
         FMM: formula compUU — alpha + 2*atan2(...) mod 2*pi.
 
     r2 : float

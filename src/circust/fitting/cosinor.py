@@ -5,36 +5,31 @@ Modelo ritmico Cosinor — ajuste sinusoidal por minimos cuadrados.
 
 Modelo matematico
 -----------------
-    y(t) = M + A * cos(t + phi)
+    y(t) = M + A * cos(t - phi)
 
 donde
 
     M   mesor        — nivel medio de la senal
     A   amplitud     — mitad del rango pico-a-valle
-    phi acrofase     — momento del pico (desfase, en [0, 2*pi))
+    phi acrofase     — tiempo de pico en [0, 2*pi)
+
+Esta es la formulacion estandar en la literatura circadiana: phi es
+directamente el tiempo de pico (t_peak = phi), lo que hace la
+interpretacion de los parametros inmediata.
 
 El modelo se ajusta por OLS reescribiendolo como regresion lineal:
 
     y = M + b*cos(t) + g*sin(t)
-      = M + A*cos(t + phi)
+      = M + A*cos(t - phi)
 
-con  b = A*cos(phi),  g = -A*sin(phi),  de modo que
+con  b = A*cos(phi),  g = A*sin(phi),  de modo que
 
     A   = sqrt(b**2 + g**2)
-    phi = atan2(-g, b) mod 2*pi
+    phi = atan2(g, b) mod 2*pi
 
-Port exacto de ``funcionCosinor()`` de R en
-``functionGTEX_cores.R`` (lineas 83-96).
-
-Firma en R::
-
-    funcionCosinor(datos, time, periodo)
-    -> list(fitted, M, A, phase_vector, phi)
-
-Equivalente en Python::
-
-    CosinorModel().fit(data, time_points)
-    -> FitResult(fitted, params={M, A, phi}, r2, residuals, ...)
+Nota: la formulacion anterior de CIRCUST usaba cos(t + phi), donde el
+pico era -phi mod 2*pi. Esta formulacion es equivalente matematicamente
+(mismos valores ajustados, mismo R2) pero phi tiene signo opuesto.
 """
 import numpy as np
 
@@ -45,7 +40,7 @@ class CosinorModel(RhythmModel):
     """
     Modelo Cosinor de un solo componente.
 
-    Ajusta  y(t) = M + A*cos(t + phi)  por minimos cuadrados ordinarios.
+    Ajusta  y(t) = M + A*cos(t - phi)  por minimos cuadrados ordinarios.
 
     Es el mas rapido de los modelos ritmicos — O(n) — y se usa tanto
     como test de ritmicidad independiente como estimador de parametros
@@ -67,10 +62,10 @@ class CosinorModel(RhythmModel):
         """
         Tiempo de pico del modelo Cosinor.
 
-        El maximo de  M + A*cos(t + phi)  ocurre cuando t + phi = 0:
-            t_peak = -phi  mod 2*pi
+        El maximo de  M + A*cos(t - phi)  ocurre cuando t - phi = 0:
+            t_peak = phi
         """
-        return float((-phi) % (2.0 * np.pi))
+        return float(phi % (2.0 * np.pi))
 
     def fit(
         self,
@@ -91,7 +86,7 @@ class CosinorModel(RhythmModel):
         --------
         FitResult
             Claves de ``params``: ``M``, ``A``, ``phi``
-            ``fitted`` reproduce ``Mest + Aest*cos(time + phiEst)`` de R.
+            ``phi`` es directamente el tiempo de pico en [0, 2*pi).
         """
         data        = np.asarray(data,        dtype=float)
         time_points = np.asarray(time_points, dtype=float)
@@ -109,11 +104,10 @@ class CosinorModel(RhythmModel):
 
         # ── Recuperacion de parametros ─────────────────────────────────
         A_est   = np.sqrt(bcos**2 + bsin**2)                    # amplitud
-        phi_est = np.arctan2(-bsin, bcos) % (2 * np.pi)         # acrofase
+        phi_est = np.arctan2(bsin, bcos) % (2 * np.pi)          # acrofase = tiempo de pico
 
         # ── Valores ajustados ──────────────────────────────────────────
-        # R: Mest + Aest*cos(time + phiEst)
-        fitted = M_est + A_est * np.cos(time_points + phi_est)
+        fitted = M_est + A_est * np.cos(time_points - phi_est)
 
         # ── Residuos y R-cuadrado ──────────────────────────────────────
         residuals     = data - fitted
