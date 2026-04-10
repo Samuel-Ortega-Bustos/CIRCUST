@@ -2,7 +2,6 @@
 import pathlib
 from typing import Optional
 from dataclasses import dataclass, field
-from circust.constants import ZERO_COUNT_THRESHOLD, NORM_MIN, NORM_MAX
 from scipy.stats import median_abs_deviation
 
 import pandas as pd
@@ -96,7 +95,7 @@ def load_expression_matrix(
     if not file_path.exists():
         raise FileNotFoundError(
             f"Archivo de matriz de expresion no encontrado: '{path}'\n"
-            f"Verifica la ruta y asegurate de que el archivo esta en la carpeta data/raw/."
+            f"Verifica la ruta y asegurate de que el archivo esta en la carpeta data/."
         )
 
     # ── deteccion de formato ──────────────────────────────────────────────
@@ -303,10 +302,12 @@ class Preprocessor:
     """
     def __init__(
             self,
-            sparse_threshold: float = ZERO_COUNT_THRESHOLD,
+            sparse_threshold: float         = 0.3,
             zero_threshold:   Optional[float] = None,
             nan_threshold:    Optional[float] = None,
-            verbose: bool = True,
+            norm_min:         float         = -1.0,
+            norm_max:         float         =  1.0,
+            verbose:          bool          = True,
     ) -> None:
 
         if not 0.0 < sparse_threshold < 1.0:
@@ -315,11 +316,11 @@ class Preprocessor:
             )
 
         self.sparse_threshold = sparse_threshold
-        # Si el usuario proporciona overrides especificos usarlos; si no, caer
-        # a sparse_threshold — replicando el comportamiento de umbral unico de R.
-        self.zero_threshold = zero_threshold if zero_threshold is not None else sparse_threshold
-        self.nan_threshold  = nan_threshold  if nan_threshold  is not None else sparse_threshold
-        self.verbose = verbose
+        self.zero_threshold   = zero_threshold if zero_threshold is not None else sparse_threshold
+        self.nan_threshold    = nan_threshold  if nan_threshold  is not None else sparse_threshold
+        self.norm_min         = norm_min
+        self.norm_max         = norm_max
+        self.verbose          = verbose
 
     def run(self, matrix: pd.DataFrame) -> PreprocessingResult:
         """
@@ -401,11 +402,9 @@ class Preprocessor:
         Nota: la condicion es estrictamente > asi que un gen exactamente en el
         30% se conserva. Preservado aqui: (frac > threshold), no (frac >= threshold).
         """
-        n_samples = mat.shape[1]
-
         # fraccion de ceros y NaN por gen (por fila)
-        zero_frac = (mat == 0).sum(axis=1) / n_samples
-        nan_frac  = mat.isna().sum(axis=1)  / n_samples
+        zero_frac = (mat == 0).mean(axis=1)
+        nan_frac  = mat.isna().mean(axis=1)
 
         is_sparse = (zero_frac > self.zero_threshold) | (nan_frac > self.nan_threshold)
 
@@ -452,7 +451,7 @@ class Preprocessor:
             # comparten la misma etiqueta, asi que .loc devolveria ambas
             positions = np.where(mat.index == gene)[0]
 
-            # calcular MAD para cada fila duplicada usando scale=1 para replicar R
+            # calcular MAD para cada fila duplicada usando scale=1 para replicar R, con default seria "1.482"
             mads = np.array([
                 float(median_abs_deviation(mat.iloc[pos].values, scale=1))
                 for pos in positions
@@ -498,7 +497,7 @@ class Preprocessor:
             normalised = np.where(
                 span == 0,
                 0.0,
-                (NORM_MAX - NORM_MIN) * ((values - row_min) / span) + NORM_MIN
+                (self.norm_max - self.norm_min) * ((values - row_min) / span) + self.norm_min
             )
 
         return pd.DataFrame(normalised, index=mat.index, columns=mat.columns)
