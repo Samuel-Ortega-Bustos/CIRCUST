@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
-from circust.constants import SEED_GENES_DEFAULT
+from circust.core_genes import SEED_GENES_DEFAULT
 from circust.visualization.cpca_plots import plot_pc_scatter,plot_gene_panels
 
 df = load_expression_matrix("/home/samu/Documents/Universidad/TFG-Statistics/CIRCUST/data/matrixIn.parquet",gene_column="gene_id")

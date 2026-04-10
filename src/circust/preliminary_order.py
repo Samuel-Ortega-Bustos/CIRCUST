@@ -56,7 +56,7 @@ from dataclasses import dataclass, field
 from math import pi
 
 from circust.outlier import OutlierRefinementResult
-from circust.fitting.fmm import fmm_peak_time
+from circust.fitting.fmm import FMMModel
 from circust.fitting.rhythm_model import FitResult
 
 
@@ -360,12 +360,12 @@ class PreliminaryOrderEstimator:
             new_alpha = (alpha - arntl_peak + pi) % (2.0 * pi)
 
             if forward:
-                peaks[i]    = fmm_peak_time(new_alpha, beta, omega)
+                peaks[i]    = FMMModel.peak_time(new_alpha, beta, omega)
                 par_core[i] = [M, A, new_alpha, beta, omega]
             else:
                 na2 = (2.0 * pi - new_alpha) % (2.0 * pi)
                 nb2 = (2.0 * pi - beta)      % (2.0 * pi)
-                peaks[i]    = fmm_peak_time(na2, nb2, omega)
+                peaks[i]    = FMMModel.peak_time(na2, nb2, omega)
                 par_core[i] = [M, A, na2, nb2, omega]
 
         # ── Reordenar columnas de la matriz ───────────────────────────────

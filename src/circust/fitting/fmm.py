@@ -55,25 +55,75 @@ from scipy.optimize import minimize
 
 from circust.fitting.rhythm_model import FitResult, RhythmModel
 
+# ── Aceleracion opcional con Numba ─────────────────────────────────────────
+# Si Numba esta disponible, compilamos la evaluacion del modelo y la funcion
+# objetivo que Nelder-Mead llama miles de veces por gen. El grid search ya
+# esta vectorizado en NumPy y no se beneficia de JIT.
+try:
+    from numba import njit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+    def njit(*args, **kwargs):                              # type: ignore
+        def deco(fn): return fn
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return deco
+
+
+@njit(cache=True, fastmath=True)
+def _fmm_predict_jit(
+    t: np.ndarray,
+    M: float, A: float, alpha: float, beta: float, omega: float,
+    out: np.ndarray,
+) -> None:
+    """Escribe la forma de onda FMM en *out* (sin asignacion)."""
+    n = t.shape[0]
+    for i in range(n):
+        mob  = 2.0 * np.arctan(omega * np.tan((t[i] - alpha) / 2.0))
+        out[i] = M + A * np.cos(beta + mob)
+
+
+@njit(cache=True, fastmath=True)
+def _fmm_objective_jit(
+    params: np.ndarray,
+    data:   np.ndarray,
+    t:      np.ndarray,
+    upper:  float,
+    lower:  float,
+    omega_max: float,
+    buf:    np.ndarray,
+) -> float:
+    """
+    Objetivo Nelder-Mead compilado. Devuelve +inf cuando los parametros
+    violan las restricciones de estabilidad de amplitud o rangos validos.
+    """
+    M     = params[0]
+    A     = params[1]
+    alpha = params[2]
+    beta  = params[3]
+    omega = params[4]
+
+    if (M + A) > upper: return np.inf
+    if (M - A) < lower: return np.inf
+    if A <= 0.0:        return np.inf
+    if omega <= 0.0:    return np.inf
+    if omega > omega_max: return np.inf
+
+    n = t.shape[0]
+    rss = 0.0
+    for i in range(n):
+        mob  = 2.0 * np.arctan(omega * np.tan((t[i] - alpha) / 2.0))
+        pred = M + A * np.cos(beta + mob)
+        d    = pred - data[i]
+        rss += d * d
+    return rss / n
+
 
 # ---------------------------------------------------------------------------
 # Funciones internas auxiliares (replican funciones ocultas de R)
 # ---------------------------------------------------------------------------
 
-def fmm_peak_time(alpha: float, beta: float, omega: float) -> float:
-    """
-    Calcula el momento del pico de una onda FMM (``compUU`` de R).
-
-    Formula:  t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
-
-    Equivalente en R: ``compUU(al, be, om)`` (linea 79 de functionGTEX_cores.R).
-    """
-    return float(
-        (alpha + 2.0 * np.arctan2(
-            (1.0 / omega) * np.sin(-beta / 2.0),
-            np.cos(-beta / 2.0),
-        )) % (2.0 * np.pi)
-    )
 
 
 def _mobius(t: np.ndarray, alpha: float, omega: float) -> np.ndarray:
@@ -239,13 +289,26 @@ def _make_step2_objective(
 
     Evita recalcular min/max/margen en cada evaluacion (se llama miles de
     veces por ajuste). Equivalente en R: ``step2FMM()``.
+
+    Si Numba esta disponible, la funcion objetivo es un wrapper delgado
+    sobre un nucleo JIT-compilado. Si no, cae en la implementacion pura
+    NumPy con semantica identica.
     """
-    data_min = data.min()
-    data_max = data.max()
+    data_min = float(data.min())
+    data_max = float(data.max())
     slack    = 0.1 * (data_max - data_min)
     upper    = data_max + slack
     lower    = data_min - slack
     n        = len(t)
+
+    if _HAS_NUMBA:
+        buf = np.empty(n, dtype=np.float64)
+        def objective(params: np.ndarray) -> float:
+            return float(_fmm_objective_jit(
+                np.ascontiguousarray(params, dtype=np.float64),
+                data, t, upper, lower, omega_max, buf,
+            ))
+        return objective
 
     def objective(params: np.ndarray) -> float:
         M, A, alpha, beta, omega = params
@@ -308,6 +371,22 @@ class FMMModel(RhythmModel):
     # ------------------------------------------------------------------
     # API publica
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def peak_time(alpha: float, beta: float, omega: float) -> float:
+        """
+        Tiempo de pico del modelo FMM — formula compUU de R.
+
+            t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
+
+        Equivalente en R: ``compUU(al, be, om)`` (linea 79 de functionGTEX_cores.R).
+        """
+        return float(
+            (alpha + 2.0 * np.arctan2(
+                (1.0 / omega) * np.sin(-beta / 2.0),
+                np.cos(-beta / 2.0),
+            )) % (2.0 * np.pi)
+        )
 
     def fit(
         self,
@@ -404,6 +483,7 @@ class FMMModel(RhythmModel):
                 "beta":  float(beta),
                 "omega": float(omega),
             },
+            peak_time     = FMMModel.peak_time(float(alpha), float(beta), float(omega)),
             r2            = r2,
             residuals     = residuals,
             residuals_std = residuals_std,

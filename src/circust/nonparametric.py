@@ -30,6 +30,293 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
+# ── Aceleracion opcional con Numba ─────────────────────────────────────────
+# Si Numba esta disponible, compilamos el bucle interno de PAVA y las rutinas
+# auxiliares de circular_unimodal_fit a codigo maquina. Esto acelera la
+# Etapa 3.1 ~20-50x porque el bucle (L, U) x PAVA es el cuello de botella
+# dominante del pipeline (O(n^3) por gen).
+try:
+    from numba import njit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+    def njit(*args, **kwargs):                          # type: ignore
+        def deco(fn): return fn
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return deco
+
+
+@njit(cache=True, fastmath=True)
+def _pava_inc_numba(y: np.ndarray) -> np.ndarray:
+    """Pool-Adjacent-Violators creciente (pesos uniformes) compilado JIT."""
+    n = y.shape[0]
+    if n <= 1:
+        out = np.empty(n, dtype=np.float64)
+        for i in range(n):
+            out[i] = y[i]
+        return out
+
+    block_sum = np.empty(n, dtype=np.float64)
+    block_w   = np.empty(n, dtype=np.float64)
+    block_end = np.empty(n, dtype=np.int64)
+    nb = 0
+
+    for i in range(n):
+        block_sum[nb] = y[i]
+        block_w[nb]   = 1.0
+        block_end[nb] = i
+        nb += 1
+        while nb >= 2:
+            avg_prev = block_sum[nb - 2] / block_w[nb - 2]
+            avg_curr = block_sum[nb - 1] / block_w[nb - 1]
+            if avg_prev <= avg_curr:
+                break
+            block_sum[nb - 2] += block_sum[nb - 1]
+            block_w[nb - 2]   += block_w[nb - 1]
+            block_end[nb - 2]  = block_end[nb - 1]
+            nb -= 1
+
+    out = np.empty(n, dtype=np.float64)
+    start = 0
+    for b in range(nb):
+        end = block_end[b] + 1
+        avg = block_sum[b] / block_w[b]
+        for k in range(start, end):
+            out[k] = avg
+        start = end
+    return out
+
+
+@njit(cache=True, fastmath=True)
+def _pava_inc_range(buf: np.ndarray, out: np.ndarray, m: int) -> None:
+    """PAVA creciente sobre buf[:m], escribe resultado en out[:m]. Sin alloc."""
+    if m <= 0:
+        return
+    block_sum = np.empty(m, dtype=np.float64)
+    block_w   = np.empty(m, dtype=np.float64)
+    block_end = np.empty(m, dtype=np.int64)
+    nb = 0
+    for i in range(m):
+        block_sum[nb] = buf[i]
+        block_w[nb]   = 1.0
+        block_end[nb] = i
+        nb += 1
+        while nb >= 2:
+            ap = block_sum[nb - 2] / block_w[nb - 2]
+            ac = block_sum[nb - 1] / block_w[nb - 1]
+            if ap <= ac:
+                break
+            block_sum[nb - 2] += block_sum[nb - 1]
+            block_w[nb - 2]   += block_w[nb - 1]
+            block_end[nb - 2]  = block_end[nb - 1]
+            nb -= 1
+    start = 0
+    for b in range(nb):
+        end = block_end[b] + 1
+        avg = block_sum[b] / block_w[b]
+        for k in range(start, end):
+            out[k] = avg
+        start = end
+
+
+@njit(cache=True, fastmath=True)
+def _circular_unimodal_fit_numba(
+    v: np.ndarray, candL: np.ndarray, candU: np.ndarray,
+):
+    """
+    Version JIT del bucle (L, U) x PAVA. Devuelve:
+        (fitted, mse, L_opt, U_opt, ok)
+    ``ok`` es True si se encontro un ajuste valido.
+    """
+    n = v.shape[0]
+    nL = candL.shape[0]
+    nU = candU.shape[0]
+
+    best_mse  = 1e300
+    best_L    = 0
+    best_U    = 0
+    found     = False
+    best_fit  = np.empty(n, dtype=np.float64)
+
+    # Buffers reutilizables
+    ordered_U = np.empty(nU, dtype=np.int64)
+    inc_buf   = np.empty(n + 2, dtype=np.float64)   # interior PAVA input
+    inc_out   = np.empty(n + 2, dtype=np.float64)   # interior PAVA output
+    full_inc  = np.empty(n + 2, dtype=np.float64)   # [v[L], pava, v[U]]
+    dec_buf   = np.empty(n + 2, dtype=np.float64)
+    dec_out   = np.empty(n + 2, dtype=np.float64)
+    valid_Us      = np.empty(nU, dtype=np.int64)
+    valid_inc_len = np.empty(nU, dtype=np.int64)
+    valid_inc_mat = np.empty((nU, n + 2), dtype=np.float64)
+    fitted        = np.empty(n, dtype=np.float64)
+
+    for li in range(nL):
+        indL = candL[li]
+
+        # Ordenar candU: primero >= indL, luego < indL
+        k = 0
+        for j in range(nU):
+            if candU[j] >= indL:
+                ordered_U[k] = candU[j]; k += 1
+        for j in range(nU):
+            if candU[j] < indL:
+                ordered_U[k] = candU[j]; k += 1
+
+        n_valid = 0
+        stop_L  = False
+
+        for uj in range(nU):
+            indU = ordered_U[uj]
+
+            # ── _increasing_segment ──
+            if indL == indU:
+                # ajuste constante
+                mean_v = 0.0
+                for t in range(n):
+                    mean_v += v[t]
+                mean_v /= n
+                mse = 0.0
+                for t in range(n):
+                    d = v[t] - mean_v
+                    mse += d * d
+                mse /= n
+                if mse < best_mse:
+                    best_mse = mse
+                    best_L = indL
+                    best_U = indU
+                    for t in range(n):
+                        best_fit[t] = mean_v
+                    found = True
+                continue
+
+            if indL < indU:
+                k_interior = indU - indL - 1
+                if k_interior > 0:
+                    for t in range(k_interior):
+                        inc_buf[t] = v[indL + 1 + t]
+            else:
+                k_interior = (n - indL - 1) + indU
+                if k_interior > 0:
+                    p = 0
+                    for t in range(indL + 1, n):
+                        inc_buf[p] = v[t]; p += 1
+                    for t in range(0, indU):
+                        inc_buf[p] = v[t]; p += 1
+
+            inc_len = k_interior + 2
+            if k_interior > 0:
+                _pava_inc_range(inc_buf, inc_out, k_interior)
+                full_inc[0] = v[indL]
+                for t in range(k_interior):
+                    full_inc[1 + t] = inc_out[t]
+                full_inc[k_interior + 1] = v[indU]
+            else:
+                full_inc[0] = v[indL]
+                full_inc[1] = v[indU]
+
+            # Validez
+            if inc_len > 2:
+                if full_inc[1] <= v[indL]:
+                    stop_L = True
+                    break
+                is_valid_U = full_inc[inc_len - 2] < v[indU]
+            else:
+                is_valid_U = True
+
+            if is_valid_U:
+                valid_Us[n_valid] = indU
+                valid_inc_len[n_valid] = inc_len
+                for t in range(inc_len):
+                    valid_inc_mat[n_valid, t] = full_inc[t]
+                n_valid += 1
+
+        # Pasada hacia atras
+        for rev in range(n_valid - 1, -1, -1):
+            indU    = valid_Us[rev]
+            inc_len = valid_inc_len[rev]
+
+            if indL == indU:
+                continue  # ya manejado arriba
+
+            # ── _decreasing_segment ──
+            if indU < indL:
+                k_int = indL - indU - 1
+                if k_int > 0:
+                    for t in range(k_int):
+                        dec_buf[t] = v[indU + 1 + t]
+            else:
+                k_int = (n - indU - 1) + indL
+                if k_int > 0:
+                    p = 0
+                    for t in range(indU + 1, n):
+                        dec_buf[p] = v[t]; p += 1
+                    for t in range(0, indL):
+                        dec_buf[p] = v[t]; p += 1
+
+            if k_int == 0:
+                dec_ok = True
+                is_valid_dec = True
+            else:
+                # pava decreciente = -pava_inc(-buf)
+                for t in range(k_int):
+                    dec_buf[t] = -dec_buf[t]
+                _pava_inc_range(dec_buf, dec_out, k_int)
+                for t in range(k_int):
+                    dec_out[t] = -dec_out[t]
+
+                if dec_out[k_int - 1] < v[indL]:
+                    break  # no mas U's validos
+                is_valid_dec = dec_out[0] <= v[indU]
+                dec_ok = True
+
+            if not is_valid_dec:
+                continue
+
+            # ── _assemble ──
+            # arco creciente L..U
+            if indL <= indU:
+                for t in range(inc_len):
+                    fitted[indL + t] = valid_inc_mat[rev, t]
+            else:
+                p = 0
+                for t in range(indL, n):
+                    fitted[t] = valid_inc_mat[rev, p]; p += 1
+                for t in range(0, indU + 1):
+                    fitted[t] = valid_inc_mat[rev, p]; p += 1
+
+            # arco decreciente U+1..L-1 (interior)
+            if k_int > 0:
+                if indU < indL:
+                    for t in range(k_int):
+                        fitted[indU + 1 + t] = dec_out[t]
+                else:
+                    p = 0
+                    for t in range(indU + 1, n):
+                        fitted[t] = dec_out[p]; p += 1
+                    for t in range(0, indL):
+                        fitted[t] = dec_out[p]; p += 1
+
+            # MSE
+            mse = 0.0
+            for t in range(n):
+                d = v[t] - fitted[t]
+                mse += d * d
+            mse /= n
+
+            if mse < best_mse:
+                best_mse = mse
+                best_L = indL
+                best_U = indU
+                for t in range(n):
+                    best_fit[t] = fitted[t]
+                found = True
+
+        if best_mse == 0.0:
+            break
+
+    return best_fit, best_mse, best_L, best_U, found
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Algoritmo Pool-Adjacent-Violators  (R: pavaC / Iso::pava)
@@ -58,12 +345,14 @@ def pava_increasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
     --------
     array (n,) — valores ajustados monotonicamente no decrecientes.
     """
-    y = np.asarray(y, dtype=np.float64)
+    y = np.ascontiguousarray(np.asarray(y, dtype=np.float64))
     n = len(y)
     if n <= 1:
         return y.copy()
 
     if w is None:
+        if _HAS_NUMBA:
+            return _pava_inc_numba(y)
         w = np.ones(n, dtype=np.float64)
     else:
         w = np.asarray(w, dtype=np.float64)
@@ -201,6 +490,17 @@ def circular_unimodal_fit(
         fitted = np.full(n, v.mean())
         mse = float(np.mean((v - fitted) ** 2))
         return fitted, mse, 0, 0
+
+    # ── Ruta rapida Numba ────────────────────────────────────────────────
+    if _HAS_NUMBA:
+        fitted, mse, L_opt, U_opt, ok = _circular_unimodal_fit_numba(
+            v,
+            np.ascontiguousarray(candL.astype(np.int64)),
+            np.ascontiguousarray(candU.astype(np.int64)),
+        )
+        if ok:
+            return fitted, float(mse), int(L_opt), int(U_opt)
+        return None
 
     # Vector duplicado para indexacion circular envolvente.
     v2 = np.concatenate([v, v])
@@ -493,8 +793,48 @@ class NonParametricScorer:
     >>> print(result.summary())
     """
 
-    def __init__(self, verbose: bool = True) -> None:
+    def __init__(self, verbose: bool = True, n_jobs: int = -1) -> None:
+        """
+        Parametros
+        ----------
+        verbose : bool
+            Imprimir mensajes de progreso.
+        n_jobs : int
+            Numero de procesos worker para paralelizar el bucle por gen.
+            ``-1`` usa todos los nucleos disponibles, ``1`` deshabilita el
+            paralelismo (util para debugging). Se usa ``joblib`` con el
+            backend ``loky``.
+        """
         self.verbose = verbose
+        self.n_jobs  = n_jobs
+
+    @staticmethod
+    def _score_one_gene(
+        row: np.ndarray,
+    ) -> tuple[np.ndarray, float, float, float]:
+        """
+        Puntua un unico gen. Devuelve (fitted, mse_np, mse_flat, r2).
+
+        Funcion pura (sin ``self``) para poder ser serializada por
+        ``joblib`` hacia los procesos worker.
+        """
+        row_mean  = float(row.mean())
+        mse_flat  = float(np.mean((row - row_mean) ** 2))
+
+        result = circular_unimodal_fit(row)
+        if result is not None:
+            fitted = result[0]
+            mse_np = float(result[1])
+        else:
+            fitted = np.full(row.shape[0], row_mean)
+            mse_np = mse_flat
+
+        if mse_flat > 0.0:
+            r2 = 1.0 - mse_np / mse_flat
+        else:
+            r2 = 0.0
+
+        return fitted, mse_np, mse_flat, r2
 
     def run(self, expr_ordered: pd.DataFrame) -> NonParametricResult:
         """
@@ -522,31 +862,27 @@ class NonParametricScorer:
         mse_flat   = np.zeros(n_genes, dtype=np.float64)
         r2         = np.zeros(n_genes, dtype=np.float64)
 
-        for i in range(n_genes):
-            if self.verbose and (i + 1) % 500 == 0:
-                self._log(f"  [{i+1}/{n_genes}]")
+        # ── Bucle por gen (paralelizable con joblib) ─────────────────────
+        # Cada gen es independiente, asi que repartimos las filas entre
+        # procesos worker. Usamos el backend 'loky' (por defecto) para
+        # evitar la GIL; para n_jobs=1 ejecutamos en el proceso principal
+        # sin overhead de serializacion.
+        score_fn = NonParametricScorer._score_one_gene
 
-            row = values[i]
+        if self.n_jobs == 1:
+            results = [score_fn(values[i]) for i in range(n_genes)]
+        else:
+            from joblib import Parallel, delayed
+            self._log(f"  Paralelizando en {self.n_jobs} jobs ...")
+            results = Parallel(n_jobs=self.n_jobs)(
+                delayed(score_fn)(values[i]) for i in range(n_genes)
+            )
 
-            # Modelo plano: predecir la media.
-            row_mean = row.mean()
-            mse_flat[i] = float(np.mean((row - row_mean) ** 2))
-
-            # Ajuste isotonico unimodal.
-            result = circular_unimodal_fit(row)
-            if result is not None:
-                fitted_mat[i] = result[0]
-                mse_np[i]     = result[1]
-            else:
-                # Respaldo: ajuste constante.
-                fitted_mat[i] = row_mean
-                mse_np[i]     = mse_flat[i]
-
-            # R² = 1 − MSE_NP / MSE_flat.
-            if mse_flat[i] > 0:
-                r2[i] = 1.0 - mse_np[i] / mse_flat[i]
-            else:
-                r2[i] = 0.0
+        for i, (fit_i, mse_np_i, mse_flat_i, r2_i) in enumerate(results):
+            fitted_mat[i] = fit_i
+            mse_np[i]     = mse_np_i
+            mse_flat[i]   = mse_flat_i
+            r2[i]         = r2_i
 
         self._log(f"  Hecho — {n_genes} genes puntuados.")
 

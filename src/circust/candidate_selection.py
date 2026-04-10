@@ -39,7 +39,95 @@ from dataclasses import dataclass, field
 from math import pi
 
 from circust.fitting.cosinor import CosinorModel
-from circust.fitting.fmm import FMMModel, fmm_peak_time
+from circust.fitting.fmm import FMMModel
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Worker de sector (nivel de modulo para que joblib lo pueda serializar)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _process_sector(
+    sector_id:         int,
+    sec_genes:         list,
+    sec_r2_np:         np.ndarray,
+    sec_rows:          np.ndarray,
+    r2_floor_s:        float,
+    q3_all:            float,
+    circ:              np.ndarray,
+    tam:               int,
+    omega_min:         float,
+    r2_par_threshold:  float,
+    fmm_alpha_grid:    int,
+    fmm_omega_grid:    int,
+    fmm_num_reps:      int,
+) -> tuple:
+    """
+    Procesa un unico sector: itera por genes en orden descendente de R²_NP
+    hasta agotar la puerta de "continuar mas alla del objetivo".
+
+    Devuelve una tupla con los genes aceptados del sector, sus ajustes
+    FMM/Cosinor, parametros, picos, R²_par, lista de descartados y el
+    numero total de genes examinados. La semantica es identica al bucle
+    secuencial original — cada sector se resuelve de forma independiente.
+    """
+    fmm_model = FMMModel(
+        length_alpha_grid=fmm_alpha_grid,
+        length_omega_grid=fmm_omega_grid,
+        num_reps=fmm_num_reps,
+    )
+    cos_model = CosinorModel()
+
+    names_s:   list[str]         = []
+    rows_s:    list[np.ndarray]  = []
+    fmm_fit_s: list[np.ndarray]  = []
+    fmm_par_s: list[list[float]] = []
+    cos_fit_s: list[np.ndarray]  = []
+    cos_par_s: list[list[float]] = []
+    peaks_s:   list[float]       = []
+    r2par_s:   list[float]       = []
+    discarded: list[str]         = []
+
+    in_sector = 0
+    rec       = 0
+    n_total   = len(sec_genes)
+
+    while rec < n_total and sec_r2_np[rec] > r2_floor_s:
+        # Puerta "continuar mas alla del objetivo".
+        if in_sector >= tam and sec_r2_np[rec] >= q3_all:
+            break
+
+        gene = sec_genes[rec]
+        row  = sec_rows[rec]
+        rec += 1
+
+        fr = fmm_model.fit(row, circ)
+        omega_f = fr.params["omega"]
+        r2_par  = fr.r2
+
+        if omega_f > omega_min and r2_par > r2_par_threshold:
+            in_sector += 1
+            cr = cos_model.fit(row, circ)
+            peak_fmm = fr.peak_time
+            names_s.append(gene)
+            rows_s.append(row)
+            fmm_fit_s.append(fr.fitted)
+            fmm_par_s.append([
+                fr.params["M"], fr.params["A"],
+                fr.params["alpha"], fr.params["beta"], fr.params["omega"],
+            ])
+            cos_fit_s.append(cr.fitted)
+            cos_par_s.append([
+                cr.params["M"], cr.params["A"], cr.params["phi"],
+            ])
+            peaks_s.append(peak_fmm)
+            r2par_s.append(r2_par)
+        else:
+            discarded.append(gene)
+
+    return (
+        sector_id, names_s, rows_s, fmm_fit_s, fmm_par_s,
+        cos_fit_s, cos_par_s, peaks_s, r2par_s, discarded, rec,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -323,6 +411,7 @@ class CandidateSelector:
         fmm_length_omega_grid: int   = 24,
         fmm_num_reps:          int   = 3,
         verbose:               bool  = True,
+        n_jobs:                int   = -1,
     ) -> None:
         self.tam                   = tam
         self.omega_min             = omega_min
@@ -331,6 +420,7 @@ class CandidateSelector:
         self.fmm_length_omega_grid = fmm_length_omega_grid
         self.fmm_num_reps          = fmm_num_reps
         self.verbose               = verbose
+        self.n_jobs                = n_jobs
 
     # ------------------------------------------------------------------
     # API publica
@@ -399,7 +489,7 @@ class CandidateSelector:
         for i, gene in enumerate(genes_above):
             row = expr_norm.loc[gene].values.astype(np.float64)
             cr  = cos_model.fit(row, circ)
-            cos_peaks[i] = (-cr.params["phi"]) % (2.0 * pi)
+            cos_peaks[i] = cr.peak_time
 
         # ── 4. Asignacion de sectores ────────────────────────────────────
         peak_ref = circular_median(cos_peaks)
@@ -437,83 +527,73 @@ class CandidateSelector:
 
         total_accepted = 0
 
+        # ── Paralelizar por sector ───────────────────────────────────────
+        # Cada uno de los 8 sectores es independiente, asi que los
+        # procesamos en paralelo. Dentro de cada sector el bucle sigue
+        # siendo secuencial para preservar la puerta de "continuar mas
+        # alla del objetivo" (que depende del contador ``in_sector``).
+        sector_inputs = []
         for sector_id in range(1, 9):
-            sec_mask    = sectors == sector_id
-            sec_genes   = genes_above[sec_mask]
-            sec_r2_np   = r2_above[sec_mask]
-
+            sec_mask  = sectors == sector_id
+            sec_genes = genes_above[sec_mask]
+            sec_r2_np = r2_above[sec_mask]
             if len(sec_genes) == 0:
+                sector_inputs.append(None)
                 continue
 
-            # Ordenar por R² NP descendente.
-            order       = np.argsort(sec_r2_np)[::-1]
-            sec_genes   = sec_genes[order]
-            sec_r2_np   = sec_r2_np[order]
+            order     = np.argsort(sec_r2_np)[::-1]
+            sec_genes = sec_genes[order]
+            sec_r2_np = sec_r2_np[order]
+            q1_sector = float(np.quantile(sec_r2_np, 0.25))
+            r2_floor_s = max(q1_sector, self.r2_par_floor)
 
-            q1_sector   = float(np.quantile(sec_r2_np, 0.25))
-            r2_floor_s  = max(q1_sector, self.r2_par_floor)
+            # Pre-extraer las filas de la matriz una sola vez por sector
+            # para evitar enviar el DataFrame completo a los workers.
+            sec_rows = expr_norm.loc[sec_genes].values.astype(np.float64)
 
-            in_sector   = 0
-            rec         = 0
+            sector_inputs.append((
+                sector_id, list(sec_genes), sec_r2_np, sec_rows,
+                r2_floor_s, q3_all, circ,
+                self.tam, self.omega_min, r2_par_threshold,
+                self.fmm_length_alpha_grid, self.fmm_length_omega_grid,
+                self.fmm_num_reps,
+            ))
 
-            # Condicion del while de R (lineas 1345, 1387, etc.):
-            # while (sector_has_genes &
-            #        (in_sector < tam | (in_sector >= tam & R2_NP < Q3_all)) &
-            #        rec <= len(genes) &
-            #        R2_NP[rec] > max(Q1_sector, 0.4))
-            while rec < len(sec_genes) and sec_r2_np[rec] > r2_floor_s:
-                # Puerta de "continuar mas alla del objetivo".
-                if in_sector >= self.tam and sec_r2_np[rec] >= q3_all:
-                    break
+        active = [inp for inp in sector_inputs if inp is not None]
 
-                gene = sec_genes[rec]
-                rec += 1
+        if self.n_jobs == 1 or len(active) <= 1:
+            sector_results = [_process_sector(*inp) for inp in active]
+        else:
+            from joblib import Parallel, delayed
+            self._log(f"  Paralelizando {len(active)} sectores en {self.n_jobs} jobs ...")
+            sector_results = Parallel(n_jobs=self.n_jobs)(
+                delayed(_process_sector)(*inp) for inp in active
+            )
 
-                # Ajustar FMM.
-                row = expr_norm.loc[gene].values.astype(np.float64)
-                fr  = fmm_model.fit(row, circ)
+        # Acumular resultados en orden de sector (1..8) para mantener
+        # semantica identica a la version secuencial.
+        for res in sector_results:
+            if res is None:
+                continue
+            (sector_id, names_s, rows_s, fmm_fit_s, fmm_par_s,
+             cos_fit_s, cos_par_s, peaks_s, r2par_s, discarded_s,
+             examined_s) = res
 
-                omega  = fr.params["omega"]
-                r2_par = fr.r2
-
-                self._log(
-                    f"    [{total_accepted+1}] {gene}  "
-                    f"R2_NP={sec_r2_np[rec-1]:.3f}  "
-                    f"R2_par={r2_par:.3f}  ω={omega:.3f}",
-                    end="\r",
-                )
-
-                if omega > self.omega_min and r2_par > r2_par_threshold:
-                    in_sector      += 1
-                    total_accepted += 1
-
-                    # Ajuste Cosinor para este gen.
-                    cr = cos_model.fit(row, circ)
-
-                    peak_fmm = fmm_peak_time(
-                        fr.params["alpha"], fr.params["beta"], fr.params["omega"]
-                    )
-
-                    acc_names.append(gene)
-                    acc_expr.append(row)
-                    acc_fmm_fit.append(fr.fitted)
-                    acc_fmm_par.append([
-                        fr.params["M"], fr.params["A"],
-                        fr.params["alpha"], fr.params["beta"], fr.params["omega"],
-                    ])
-                    acc_cos_fit.append(cr.fitted)
-                    acc_cos_par.append([
-                        cr.params["M"], cr.params["A"], cr.params["phi"],
-                    ])
-                    acc_peaks.append(peak_fmm)
-                    acc_sectors.append(sector_id)
-                    acc_r2par.append(r2_par)
-                else:
-                    acc_discarded.append(gene)
-
+            for k, gene in enumerate(names_s):
+                acc_names.append(gene)
+                acc_expr.append(rows_s[k])
+                acc_fmm_fit.append(fmm_fit_s[k])
+                acc_fmm_par.append(fmm_par_s[k])
+                acc_cos_fit.append(cos_fit_s[k])
+                acc_cos_par.append(cos_par_s[k])
+                acc_peaks.append(peaks_s[k])
+                acc_sectors.append(sector_id)
+                acc_r2par.append(r2par_s[k])
+                total_accepted += 1
+            acc_discarded.extend(discarded_s)
             self._log(
-                f"    Sector {sector_id}: accepted {in_sector}, "
-                f"examined {rec}           "
+                f"    Sector {sector_id}: accepted {len(names_s)}, "
+                f"examined {examined_s}"
             )
 
         self._log(f"  Total aceptados: {total_accepted}")

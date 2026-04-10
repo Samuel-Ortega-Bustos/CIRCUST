@@ -26,7 +26,7 @@ from circust.preprocessing import Preprocessor, load_expression_matrix
 from circust.cpca import CPCA
 from circust.outlier import OutlierRefiner
 from circust.preliminary_order import PreliminaryOrderEstimator
-from circust.constants import SEED_GENES_LARRIBA
+from circust.core_genes import SEED_GENES_LARRIBA
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REF_DIR   = REPO_ROOT / "validation" / "reference"

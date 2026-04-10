@@ -3,11 +3,21 @@ Interfaz compartida para todos los modelos de ajuste ritmico del pipeline CIRCUS
 
 Nota de diseno
 --------------
-``FitResult`` es intencionadamente un dataclass plano en lugar de una jerarquia
-de clases.  Los modelos difieren en sus parametros (Cosinor tiene 3, FMM tiene 5),
-por lo que se almacenan como un dict generico.  Todo lo demas valores ajustados,
-residuos, R-cuadrado es comun a todos los modelos.
+``FitResult`` es un contenedor de datos puro: almacena todo lo que ``fit()``
+produce, incluido el tiempo de pico precalculado por el modelo. Asi el
+resultado es autosuficiente — nadie necesita llamar al modelo despues de
+obtenerlo.
+
+La logica especifica de cada modelo vive exclusivamente en ``RhythmModel`` y
+sus subclases:
+
+    ``fit()`` — abstracto, produce un FitResult con peak_time ya calculado.
+
+Para el calculo del pico con floats sueltos (reparametrizacion manual) cada
+modelo expone un metodo estatico auxiliar, p.ej. ``FMMModel.peak_time()``.
 """
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -15,7 +25,7 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Contenedor de resultados
+# Contenedor de resultados — datos puros, sin logica de modelo
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -34,25 +44,28 @@ class FitResult:
         Claves Cosinor : ``M``, ``A``, ``phi``
             - M   : mesor (nivel medio)
             - A   : amplitud
-            - phi : acrofase en [0, 2*pi) — momento del pico
+            - phi : acrofase en [0, 2*pi)
 
         Claves FMM : ``M``, ``A``, ``alpha``, ``beta``, ``omega``
             - M     : mesor
             - A     : amplitud
-            - alpha : parametro de localizacion (centro de la region del pico) en [0, 2*pi)
+            - alpha : parametro de localizacion en [0, 2*pi)
             - beta  : parametro de forma en [0, 2*pi)
             - omega : parametro de asimetria en (0, 1]
 
+    peak_time : float
+        Tiempo de pico en [0, 2*pi), precalculado por el modelo al hacer fit().
+        Cosinor: -phi mod 2*pi.
+        FMM: formula compUU — alpha + 2*atan2(...) mod 2*pi.
+
     r2 : float
         Coeficiente de determinacion  R-cuadrado = 1 - SS_res / SS_tot.
-        Rango de -inf a 1; un modelo plano (prediciendo la media) da 0.
 
     residuals : np.ndarray, forma (n_muestras,)
         Residuos brutos: datos - ajustado.
 
     residuals_std : np.ndarray, forma (n_muestras,)
         Residuos estandarizados: (residuos - media) / desv_std.
-        Utilizados en la etapa de refinamiento de outliers.
 
     sse : float
         Suma de errores al cuadrado.
@@ -63,39 +76,18 @@ class FitResult:
 
     fitted:        np.ndarray
     params:        dict
+    peak_time:     float
     r2:            float
     residuals:     np.ndarray
     residuals_std: np.ndarray
     sse:           float
     model_name:    str
 
-    # ------------------------------------------------------------------
-    # Metodos auxiliares
-    # ------------------------------------------------------------------
-
-    @property
-    def peak_time(self) -> float:
-        """
-        Fase del pico en [0, 2*pi).
-
-        Para Cosinor es ``params["phi"]``.
-        Para FMM usa la formula cerrada ``compUU`` de R:
-            t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
-        """
-        if self.model_name == "cosinor":
-            return float(self.params["phi"])
-        elif self.model_name == "fmm":
-            from circust.fitting.fmm import fmm_peak_time
-            return fmm_peak_time(
-                self.params["alpha"], self.params["beta"], self.params["omega"]
-            )
-        else:
-            raise NotImplementedError(f"peak_time no implementado para {self.model_name}")
-
     def summary(self) -> str:
         lines = [
             f"=== Ajuste {self.model_name.upper()} ===",
             f"  R-cuadrado : {self.r2:.4f}",
+            f"  peak_time  : {self.peak_time:.4f} rad",
             f"  SSE        : {self.sse:.6f}",
             f"  parametros : { {k: round(float(v), 5) for k, v in self.params.items()} }",
         ]
@@ -125,13 +117,14 @@ class RhythmModel(ABC):
         """
         Ajusta el modelo a ``data`` observados en ``time_points``.
 
+        El ``FitResult`` devuelto incluye ``peak_time`` ya calculado.
+
         Parametros
         ----------
         data : np.ndarray, forma (n_muestras,)
             Valores de expresion normalizados (tipicamente en [-1, 1]).
         time_points : np.ndarray, forma (n_muestras,)
-            Eje temporal circular en [0, 2*pi), producido por CPCA
-            (``CPCAResult.circular_scale``).
+            Eje temporal circular en [0, 2*pi), producido por CPCA.
 
         Devuelve
         --------
@@ -153,11 +146,7 @@ class RhythmModel(ABC):
 
     @staticmethod
     def _standardise_residuals(residuals: np.ndarray, ddof: int = 1) -> np.ndarray:
-        """(res - media) / desv_std  con ``ddof`` grados de libertad.
-
-        ddof=1 corresponde a ``sd()`` de R — el valor por defecto en CIRCUST.
-        Devuelve ceros si desv_std == 0 (residuos constantes).
-        """
+        """(res - media) / desv_std  con ``ddof`` grados de libertad."""
         std = residuals.std(ddof=ddof)
         if std == 0:
             return np.zeros_like(residuals)

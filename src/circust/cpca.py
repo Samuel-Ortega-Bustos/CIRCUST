@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
 
-from circust.constants import SEED_GENES_DEFAULT, OUTLIER_RADIAL_THRESHOLD, OUTLIER_RADIAL_THRESHOLD_LOOSE, N_OUTLIER_CANDIDATES
+from circust.core_genes import SEED_GENES_DEFAULT
 
 # ===========================================================================
 # Dataclass de resultados
@@ -187,9 +187,9 @@ class CPCA:
     def __init__(
         self,
         core_genes:           list[str] = None,
-        n_outlier_candidates: int       = N_OUTLIER_CANDIDATES,
-        tight_radius:         float     = OUTLIER_RADIAL_THRESHOLD,
-        loose_radius:         float     = OUTLIER_RADIAL_THRESHOLD_LOOSE,
+        n_outlier_candidates: int       = 8,
+        tight_radius:         float     = 0.10,
+        loose_radius:         float     = 0.15,
         verbose:              bool      = True,
     ) -> None:
 

@@ -34,9 +34,8 @@ from typing import Optional
 
 from circust.cpca import CPCA, CPCAResult
 from circust.fitting.cosinor import CosinorModel
-from circust.fitting.fmm import FMMModel, fmm_peak_time
+from circust.fitting.fmm import FMMModel
 from circust.fitting.rhythm_model import FitResult
-import circust.constants as const
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +228,15 @@ class OutlierRefiner:
 
     def __init__(
         self,
-        multi_threshold:           float = const.OUTLIER_RESIDUAL_THRESHOLD,
+        multi_threshold:           float = 3.0,
         uni_threshold:             float = 4.0,
         max_outlier_fraction:      float = 0.05,
         fmm_length_alpha_grid:     int   = 48,
         fmm_length_omega_grid:     int   = 24,
         fmm_num_reps:              int   = 3,
-        cpca_n_outlier_candidates: int   = const.N_OUTLIER_CANDIDATES,
-        cpca_tight_radius:         float = const.OUTLIER_RADIAL_THRESHOLD,
-        cpca_loose_radius:         float = const.OUTLIER_RADIAL_THRESHOLD_LOOSE,
+        cpca_n_outlier_candidates: int   = 8,
+        cpca_tight_radius:         float = 0.10,
+        cpca_loose_radius:         float = 0.15,
         verbose:                   bool  = True,
     ) -> None:
         self.multi_threshold           = multi_threshold
@@ -410,12 +409,10 @@ class OutlierRefiner:
             signal_names.append(name)
 
             # tiempo de pico FMM via compUU  (R linea 4009)
-            peak_fmm[name] = fmm_peak_time(
-                fr.params["alpha"], fr.params["beta"], fr.params["omega"]
-            )
+            peak_fmm[name] = fr.peak_time
 
             # acrofase Cosinor  (R linea 4006: (-funCos[[5]]) %% (2*pi))
-            peak_cos[name] = (-cr.params["phi"]) % (2.0 * np.pi)
+            peak_cos[name] = cr.peak_time
 
         self._log(f"    Ajuste completado de {n_total} senales.           ")
 
@@ -631,9 +628,7 @@ class OutlierRefiner:
             fr   = fmm_model.fit(data, circular_scale)
 
             fmm_fits_fin[gene]   = fr
-            peak_times_fin[gene] = fmm_peak_time(
-                fr.params["alpha"], fr.params["beta"], fr.params["omega"]
-            )
+            peak_times_fin[gene] = fr.peak_time
 
         self._log(f"    Ajuste completado de {len(fmm_fits_fin)} genes centrales (final).      ")
         return fmm_fits_fin, peak_times_fin

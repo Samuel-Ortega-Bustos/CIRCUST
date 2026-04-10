@@ -62,6 +62,16 @@ class CosinorModel(RhythmModel):
     >>> print(result.summary())
     """
 
+    @staticmethod
+    def peak_time(phi: float) -> float:
+        """
+        Tiempo de pico del modelo Cosinor.
+
+        El maximo de  M + A*cos(t + phi)  ocurre cuando t + phi = 0:
+            t_peak = -phi  mod 2*pi
+        """
+        return float((-phi) % (2.0 * np.pi))
+
     def fit(
         self,
         data:        np.ndarray,
@@ -114,6 +124,7 @@ class CosinorModel(RhythmModel):
         return FitResult(
             fitted        = fitted,
             params        = {"M": float(M_est), "A": float(A_est), "phi": float(phi_est)},
+            peak_time     = CosinorModel.peak_time(float(phi_est)),
             r2            = r2,
             residuals     = residuals,
             residuals_std = residuals_std,
