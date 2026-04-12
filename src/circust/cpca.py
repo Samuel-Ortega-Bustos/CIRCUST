@@ -269,20 +269,14 @@ class CPCA:
         genes_found: list[str],
     ) -> CPCAResult:
         """
-        Ejecuta el procedimiento CPCA completo sobre la matriz normalizada de genes centrales.
-
-        Equivalente en R: ``obtainCPCA13()`` lineas 3804-3893.
-
-        Pasos dentro de este metodo, con referencias a lineas de R:
-
-        1. Centrar por filas la matriz (R: centrado(), linea 3806)
-        2. Escalar por columnas y ejecutar PCA (R: prcomp(scale.=TRUE), linea 3806)
-        3. Extraer loadings de PC1, PC2, PC3 por muestra (lineas 3810-3812)
-        4. Proyectar muestras sobre el circulo unitario (lineas 3813-3815)
-        5. Ordenar muestras por angulo phi (lineas 3816-3817)
-        6. Calcular norma PC1-PC2 por muestra (lineas 3821-3823)
-        7. Marcar muestras outlier (lineas 3824-3847)
-        8. Mapear posiciones de outliers al orden clasificado (linea 3872)
+        Ejecuta el procedimiento CPCA completo sobre la matriz normalizada de genes.
+        1. Centrar por filas la matriz
+        2. Escalar por columnas y ejecutar SVD (PCA)
+        3. Extraer loadings de PC1, PC2, PC3 y calcular varianza explicada
+        4. Calcular norma PC1-PC2 por muestra y proyectar sobre el circulo unitario
+        5. Ordenar muestras por angulo phi
+        6. Marcar muestras outlier (cercanas al origen)
+        7. Mapear posiciones de outliers al orden clasificado
         """
         values   = core_matrix.values.astype(float)   # forma: (n_genes, n_muestras)
         n_genes, n_samples = values.shape
@@ -292,7 +286,7 @@ class CPCA:
         row_means = values.mean(axis=1, keepdims=True)
         centred   = values - row_means    # forma: (n_genes, n_muestras)
 
-        # ── Paso 2: escalar por columnas y PCA ──────────────────────────────
+        # ── Paso 2: escalar por columnas y SVD (PCA) ────────────────────────
         # R: prcomp(centrado(mNorm8), scale.=TRUE, center=FALSE)
         #
         # En R, prcomp trata las COLUMNAS como variables y las FILAS como observaciones.
@@ -328,53 +322,51 @@ class CPCA:
         n_components = min(3, n_genes, n_samples)
         _, sigma_all, Vt = np.linalg.svd(scaled, full_matrices=False)
 
-        # Las componentes (loadings) en Scipy/Numpy salen transpuestas (Vt)
-        # Vt tiene forma (n_genes, n_muestras). Las filas son el equivalente a cp8$rotation
+        # ── Paso 3: extraer loadings y calcular varianza explicada ──────────
+        # Vt tiene forma (n_componentes, n_muestras); cada fila es un PC.
+        # Equivalente a cp8$rotation de R (columnas PC1, PC2, PC3).
         pc1 = Vt[0]
         pc2 = Vt[1]
         pc3 = Vt[2] if n_components >= 3 else np.zeros(n_samples)
 
-        # ── Paso 4: varianza explicada ──────────────────────────────────────
         var_exp = np.zeros(3)
         var_exp[:n_components] = (sigma_all[:n_components]**2) / np.sum(sigma_all**2)
 
-        # ── Paso 5: proyectar sobre el circulo unitario ─────────────────────
-        norm12 = np.sqrt(pc1**2 + pc2**2)
+        # ── Paso 4: norma PC1-PC2 y proyeccion sobre el circulo unitario ────
+        # Equivalente a la normalizacion z_p = a_p/r, z_q = a_q/r del paper
+        # (Scholz 2007, eq. 5). La norma mide cuanto participa cada muestra
+        # en la oscilacion dominante; muestras cercanas al origen son outliers.
+        norm12    = np.sqrt(pc1**2 + pc2**2)                        # R: d8
         safe_norm = np.where(norm12 == 0, 1.0, norm12)
 
         xi  = pc1 / safe_norm
         yi  = pc2 / safe_norm
-        phi = np.arctan2(yi, xi) % (2 * np.pi)                    # R: phi8
+        phi = np.arctan2(yi, xi) % (2 * np.pi)                     # R: phi8
 
-        # ── Paso 6: ordenar muestras por angulo ────────────────────────────
+        # ── Paso 5: ordenar muestras por angulo ────────────────────────────
         sample_order   = np.argsort(phi)                            # R: orderCPCA8
         circular_scale = phi[sample_order]                          # R: escalaPhi8
 
-        # ── Paso 7: logica de outliers ─────────────────────────────────────
-        d = norm12                                                  # R: d8
+        # ── Paso 6: marcar muestras outlier ────────────────────────────────
+        # Tomar las n_outlier_candidates muestras con menor norma (mas cercanas
+        # al origen) y confirmarlas si caen dentro del radio tight o loose.
+        n_cands       = min(self.n_outlier_candidates, n_samples)
+        candidate_idx = np.argsort(norm12)[:n_cands]                # R: obs8
 
-        # R (linea 3824): obs8 <- order(d8)[1:nOuts]
-        # Tomar las nOuts muestras con MENOR norma (mas cercanas al origen)
-        n_cands            = min(self.n_outlier_candidates, n_samples)
-        candidate_idx      = np.argsort(d)[:n_cands]               # R: obs8
-
-        # R (lineas 3831-3847): verificar radios en dos pasadas
-        #   Primera pasada: contar muestras con d <= 0.10 (radio estricto)
-        #   Segunda pasada (solo si la primera no encontro nada): contar d <= 0.15
-        tight_mask = d[candidate_idx] <= self.tight_radius
+        tight_mask = norm12[candidate_idx] <= self.tight_radius
         used_loose = False
 
         if tight_mask.any():
             outlier_idx = candidate_idx[tight_mask]
         else:
-            loose_mask  = d[candidate_idx] <= self.loose_radius
+            loose_mask  = norm12[candidate_idx] <= self.loose_radius
             outlier_idx = candidate_idx[loose_mask]
-            used_loose  = loose_mask.any()                          # R: rojo8
+            used_loose  = loose_mask.any()
 
-        n_outliers = len(outlier_idx)                               # R: ss8
+        n_outliers = len(outlier_idx)
 
-        # ── Paso 8: mapear posiciones de outliers al orden clasificado ─────
-        # Para cada indice original de outlier, encontramos donde esta en sample_order.
+        # ── Paso 7: mapear posiciones de outliers al orden clasificado ─────
+        # Para cada indice original de outlier, encontrar su posicion en sample_order.
         if n_outliers > 0:
             outlier_positions = np.array([
                 int(np.where(sample_order == idx)[0][0])
