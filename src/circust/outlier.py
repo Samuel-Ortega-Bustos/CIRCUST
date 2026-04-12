@@ -19,10 +19,6 @@ partiendo del resultado CPCA inicial y procediendo a traves de:
      renormalizarla — produciendo la matriz usada para la puntuacion
      genomica completa.
 
-Equivalente en R
------------------
-Lineas 3962–4101 de ``giveMatIniNP_v3_cores`` en ``functionGTEX_cores.R``.
-
 Posicion en el pipeline
 -----------------------
     Preprocessor  →  CPCA  →  OutlierRefiner  →  RhythmicityScorer
@@ -36,21 +32,7 @@ from circust.cpca import CPCA, CPCAResult
 from circust.fitting.cosinor import CosinorModel
 from circust.fitting.fmm import FMMModel
 from circust.fitting.rhythm_model import FitResult
-
-
-# ---------------------------------------------------------------------------
-# Auxiliar — normalizar cada fila a [−1, 1]  (vectorizado)
-# ---------------------------------------------------------------------------
-
-def _normalise_matrix(mat: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza min-max cada fila a [−1, 1]. Filas constantes → ceros."""
-    values  = mat.values.astype(float)
-    row_min = values.min(axis=1, keepdims=True)
-    row_max = values.max(axis=1, keepdims=True)
-    span    = row_max - row_min
-    with np.errstate(invalid="ignore", divide="ignore"):
-        normed = np.where(span == 0, 0.0, 2.0 * (values - row_min) / span - 1.0)
-    return pd.DataFrame(normed, index=mat.index, columns=mat.columns)
+from circust.preprocessing import normalise_matrix
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +299,6 @@ class OutlierRefiner:
         )
 
         # ── Paso 5: ajustar FMM en genes centrales con ordenamiento final ─
-        # Equivalente en R: lineas 4109-4136 (allParAfter, phisFMMAfter)
         self._log("  Paso 5 — ajustando FMM en genes centrales (ordenamiento final) ...")
         fmm_fits_fin, peak_fmm_fin = self._fit_final(expr_norm_final, cpca_final)
 
@@ -358,15 +339,15 @@ class OutlierRefiner:
         --------
         fmm_fits   : {nombre_senal: FitResult}
         cos_fits   : {nombre_senal: FitResult}
-        std_res_df : DataFrame (n_senales × n_muestras) de residuos FMM estandarizados
+        std_res_df : DataFrame (n_genes+PCS x n_muestras) de residuos FMM estandarizados
         peak_fmm   : {nombre_senal: float}  — tiempos de pico FMM
         peak_cos   : {nombre_senal: float}  — acrofases Cosinor
         """
-        order       = cpca.sample_order         # sample ordering indices
-        time_points = cpca.circular_scale       # escalaPhi8  (sorted phi)
+        order       = cpca.sample_order         # indices ordenados
+        time_points = cpca.circular_scale       # ordenacion en base a phi
         genes       = cpca.core_genes_found
 
-        # Construir el dict de senales ordenadas (R: datCore)
+        # Construir el dict de senales ordenadas
         # Genes centrales: filas de core_matrix reordenadas por sample_order
         cm = cpca.core_matrix
         cm_vals = cm.values if hasattr(cm, "values") else cm
@@ -400,23 +381,22 @@ class OutlierRefiner:
 
             fr = fmm_model.fit(data, time_points)
             cr = cos_model.fit(data, time_points)
-
+            #Almacena los ajustes de los modelos fmm y cosinor para cada gen
             fmm_fits[name] = fr
             cos_fits[name] = cr
 
-            # residuos FMM estandarizados  (R linea 4003: resParStTissue)
+            # residuos FMM estandarizados 
             std_res_rows.append(fr.residuals_std)
             signal_names.append(name)
 
-            # tiempo de pico FMM via compUU  (R linea 4009)
+            #Peak del modelo fmm
             peak_fmm[name] = fr.peak_time
-
-            # acrofase Cosinor  (R linea 4006: (-funCos[[5]]) %% (2*pi))
+            #Peak del modelo cosinor
             peak_cos[name] = cr.peak_time
 
         self._log(f"    Ajuste completado de {n_total} senales.           ")
 
-        # Construir DataFrame: filas = senales, columnas = posiciones de muestra 0..n-1
+        # Construir DataFrame: filas = genes+PC1/PC2/PC3, columnas = posiciones de muestra en CPCA 0..n-1
         std_res_df = pd.DataFrame(
             np.vstack(std_res_rows),
             index   = signal_names,
@@ -431,26 +411,25 @@ class OutlierRefiner:
         std_res_df: pd.DataFrame,
     ) -> tuple[list[int], list[int]]:
         """
-        Aplica los dos criterios de outlier de R a los residuos FMM estandarizados.
+        Aplica los dos criterios de outlier a los residuos FMM estandarizados.
 
-        Criterio multivariante (R lineas 4057-4067)
+        Criterio multivariante
         --------------------------------------------
         Para cada gen central, encontrar posiciones en el array de residuos
         ordenado donde |res_std| > multi_threshold. Una muestra en esa
         posicion es candidata multivariante solo si su indice de muestra
-        ORIGINAL tambien esta en la lista de candidatos a outlier CPCA
-        (initialTissue[[3]]).
+        ORIGINAL tambien esta en la lista de candidatos a outlier CPCA, es decir 
+        su distancia es inferior a sparse_threshold.
         Limitado a ceil(max_outlier_fraction × n_muestras) total.
 
-        Criterio univariante (R lineas 4069-4074)
+        Criterio univariante
         ------------------------------------------
         Para cada gen central, cualquier posicion donde |res_std| > uni_threshold
         es un outlier univariante. Se aplica el mismo limite total.
 
         Nota: ambos criterios trabajan solo sobre GENES CENTRALES, no autogenes.
-        El DataFrame de residuos tiene autogenes como filas extra — aqui
-        seleccionamos solo las filas de genes centrales, coincidiendo con el
-        bucle de R sobre ``1:length(coreG)`` (lineas 4056, 4069).
+        El DataFrame de residuos tiene autogenes como filas extra aqui
+        seleccionamos solo las filas de genes.
 
         Devuelve
         --------
@@ -476,7 +455,6 @@ class OutlierRefiner:
             gene_res = core_std_res[i]    # (n_samples_ordered,)
 
             # ── Multivariante: |res| > multi_threshold Y outlier CPCA confirmado
-            # R lineas 4057-4067: incrementa nOutsTot por MUESTRA.
             if np.any(np.abs(gene_res) > self.multi_threshold) and n_flagged <= cap:
                 positions = np.where(np.abs(gene_res) > self.multi_threshold)[0]
                 for pos in positions:
@@ -532,7 +510,7 @@ class OutlierRefiner:
         core_clean  = core_matrix.iloc[:, keep_mask]
 
         # Renormalizar (R linea 4085)
-        core_norm_clean = _normalise_matrix(core_clean)
+        core_norm_clean = normalise_matrix(core_clean)
 
         # Re-ejecutar CPCA (R linea 4087: obtainCPCA13(mTissueCoreGNorm,...))
         cpca_final = CPCA(
@@ -555,8 +533,6 @@ class OutlierRefiner:
         Elimina muestras outlier de la matriz completa, luego reordena
         por el ordenamiento circular CPCA final.
 
-        Equivalente en R: lineas 4094-4101.
-
         El resultado se renormaliza gen por gen porque eliminar muestras
         cambia el min/max por gen (R linea 4099: t(apply(..., normalice))).
 
@@ -571,11 +547,11 @@ class OutlierRefiner:
         keep_mask = ~np.isin(all_cols, dropped)
         mat_clean = expr_norm.iloc[:, keep_mask]
 
-        # Reordenar columnas por fase circular (R lineas 4095-4097)
+        # Reordenar columnas por fase circular 
         mat_ordered = mat_clean.iloc[:, sample_order]
 
-        # Renormalizar (R linea 4099)
-        mat_norm = _normalise_matrix(mat_ordered)
+        # Renormalizar
+        mat_norm = normalise_matrix(mat_ordered)
 
         return mat_norm
 
@@ -586,9 +562,6 @@ class OutlierRefiner:
     ) -> tuple[dict, dict]:
         """
         Ajusta FMM en cada gen central usando el ordenamiento CPCA final.
-
-        Equivalente en R: lineas 4109-4136 de ``giveMatIniNP_v3_cores``
-        (``allParAfter``, ``phisFMMAfter``).
 
         Parametros
         ----------

@@ -252,6 +252,41 @@ class PreprocessingResult:
         return "\n".join(lines)
 
 
+def normalise_matrix(
+    mat: pd.DataFrame,
+    norm_min: float = -1.0,
+    norm_max: float =  1.0,
+) -> pd.DataFrame:
+    """
+    Normaliza min-max cada fila de ``mat`` al intervalo [norm_min, norm_max].
+
+    Filas constantes (min == max) se mapean a todos ceros, replicando el
+    comportamiento de ``normalice2()`` de R.
+
+    Parametros
+    ----------
+    mat : pd.DataFrame
+        Matriz genes × muestras. Valores pueden ser float o int.
+    norm_min, norm_max : float
+        Extremos del rango de salida. Por defecto [-1, 1].
+
+    Devuelve
+    --------
+    pd.DataFrame con la misma forma e indices que ``mat``.
+    """
+    values  = mat.values.astype(float)
+    row_min = values.min(axis=1, keepdims=True)
+    row_max = values.max(axis=1, keepdims=True)
+    span    = row_max - row_min
+    with np.errstate(invalid="ignore", divide="ignore"):
+        normed = np.where(
+            span == 0,
+            0.0,
+            (norm_max - norm_min) * ((values - row_min) / span) + norm_min,
+        )
+    return pd.DataFrame(normed, index=mat.index, columns=mat.columns)
+
+
 class Preprocessor:
     """
     Limpia y normaliza una matriz de expresion genica bruta.
@@ -353,7 +388,7 @@ class Preprocessor:
         mat, dropped_duplicates = self._resolve_duplicates(mat)
 
         # paso 4 — normalizar cada gen a [-1, 1]
-        expr_norm = self._normalise(mat)
+        expr_norm = normalise_matrix(mat, self.norm_min, self.norm_max)
 
         result = PreprocessingResult(
             expr_norm          = expr_norm,
@@ -469,38 +504,6 @@ class Preprocessor:
         keep_mask[rows_to_drop] = False
 
         return mat.iloc[keep_mask].copy(), dropped_names
-
-    def _normalise(self, mat: pd.DataFrame) -> pd.DataFrame:
-        """
-        Escala cada gen independientemente al intervalo [NORM_MIN, NORM_MAX]
-        usando normalizacion min-max.
-
-        Caso borde — gen constante (min == max):
-            normalice() de R divide por cero silenciosamente (devuelve NaN/Inf).
-            La variante mas segura normalice2() de R devuelve todos ceros.
-            Seguimos el comportamiento de normalice2(): genes constantes -> todos ceros.
-            Esta es la eleccion biologica correcta — un gen sin varianza
-            no aporta informacion para el ordenamiento.
-        """
-        values = mat.values.astype(float)
-
-        row_min = values.min(axis=1, keepdims=True)
-        row_max = values.max(axis=1, keepdims=True)
-        span    = row_max - row_min
-
-        # evitar division por cero para genes constantes.
-        # Usamos np.errstate para suprimir el RuntimeWarning de numpy:
-        # np.where() evalua AMBAS ramas antes de elegir, asi que la
-        # division ocurre en filas con span cero — pero el resultado se
-        # descarta. errstate le dice a numpy que no avise.
-        with np.errstate(invalid="ignore", divide="ignore"):
-            normalised = np.where(
-                span == 0,
-                0.0,
-                (self.norm_max - self.norm_min) * ((values - row_min) / span) + self.norm_min
-            )
-
-        return pd.DataFrame(normalised, index=mat.index, columns=mat.columns)
 
     # -----------------------------------------------------------------------
     # Utilidades
