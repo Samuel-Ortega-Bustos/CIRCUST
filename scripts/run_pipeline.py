@@ -72,7 +72,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
 from circust.outlier import OutlierRefiner
-from circust.preliminary_order import PreliminaryOrderEstimator
+from circust.synchronizer import CircularSynchronizer
 from circust.nonparametric import NonParametricScorer
 from circust.candidate_selection import CandidateSelector
 from circust.reference_set import ReferenceSetBuilder
@@ -350,10 +350,10 @@ def main() -> None:
     _banner("Etapa 2: Ordenamiento Circular Preliminar")
 
     core_genes_found = list(outlier_result.cpca_final.core_genes_found)
-    estimator = PreliminaryOrderEstimator(
-        arntl_gene=cfg["anchor_gene"],
-        dbp_gene=cfg["direction_gene"],
-        verbose=True,
+    estimator = CircularSynchronizer(
+        anchor_gene    = cfg["anchor_gene"],
+        direction_gene = cfg["direction_gene"],
+        verbose        = True,
     )
     order_result = estimator.run(outlier_result, core_genes_found)
 

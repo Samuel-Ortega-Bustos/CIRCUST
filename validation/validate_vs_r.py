@@ -25,7 +25,7 @@ import pandas as pd
 from circust.preprocessing import Preprocessor, load_expression_matrix
 from circust.cpca import CPCA
 from circust.outlier import OutlierRefiner
-from circust.preliminary_order import PreliminaryOrderEstimator
+from circust.synchronizer import CircularSynchronizer
 from circust.core_genes import SEED_GENES_LARRIBA
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -300,7 +300,7 @@ def main():
     print("="*60)
 
     t0 = time.time()
-    pre_order = PreliminaryOrderEstimator(verbose=False).run(refined, CORE_GENES)
+    pre_order = CircularSynchronizer(verbose=False).run(refined, CORE_GENES)
     t_preord = time.time() - t0
     print(f"  Preliminary ordering: {t_preord:.2f}s")
     print(pre_order.summary())

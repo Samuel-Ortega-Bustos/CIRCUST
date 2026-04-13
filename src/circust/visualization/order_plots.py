@@ -42,7 +42,7 @@ import matplotlib.patches as mpatches
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
-from circust.preliminary_order import PreliminaryOrderResult
+from circust.synchronizer import SynchronizationResult
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ _HOUR_LABELS_8 = [
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_circular_peaks(
-    result: PreliminaryOrderResult,
+    result: SynchronizationResult,
     title: str = "",
     figsize: tuple[float, float] = (6, 6),
     show_ct_labels: bool = True,
@@ -81,8 +81,8 @@ def plot_circular_peaks(
 
     Parámetros
     ----------
-    result : PreliminaryOrderResult
-        Salida de ``PreliminaryOrderEstimator.run()``.
+    result : SynchronizationResult
+        Salida de ``CircularSynchronizer.run()``.
     title : str
         Etiqueta del título del gráfico.
     figsize : tuple
@@ -203,7 +203,7 @@ def plot_circular_peaks(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_ordered_profiles(
-    result: PreliminaryOrderResult,
+    result: SynchronizationResult,
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
@@ -216,8 +216,8 @@ def plot_ordered_profiles(
 
     Parámetros
     ----------
-    result : PreliminaryOrderResult
-        Salida de ``PreliminaryOrderEstimator.run()``.
+    result : SynchronizationResult
+        Salida de ``CircularSynchronizer.run()``.
     title : str
     figsize : tuple, opcional
 
@@ -310,7 +310,7 @@ def plot_ordered_profiles(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_r2_comparison(
-    result: PreliminaryOrderResult,
+    result: SynchronizationResult,
     title: str = "",
     figsize: tuple[float, float] = (7, 4),
 ) -> Figure:
@@ -323,7 +323,7 @@ def plot_r2_comparison(
 
     Parámetros
     ----------
-    result : PreliminaryOrderResult
+    result : SynchronizationResult
     title : str
     figsize : tuple
 
@@ -387,7 +387,7 @@ def plot_r2_comparison(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_day_night_diagram(
-    result: PreliminaryOrderResult,
+    result: SynchronizationResult,
     title: str = "",
     figsize: tuple[float, float] = (5.5, 5.5),
 ) -> Figure:
@@ -404,7 +404,7 @@ def plot_day_night_diagram(
 
     Parámetros
     ----------
-    result : PreliminaryOrderResult
+    result : SynchronizationResult
     title : str
     figsize : tuple
 

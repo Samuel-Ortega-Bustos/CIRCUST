@@ -36,7 +36,7 @@ import pandas as pd
 
 from circust.cpca import CPCAResult
 from circust.outlier import OutlierRefinementResult
-from circust.preliminary_order import PreliminaryOrderResult
+from circust.synchronizer import SynchronizationResult
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ _HOUR_LABELS_8 = [
 def plot_pipeline_summary(
     cpca_result: CPCAResult,
     outlier_result: OutlierRefinementResult,
-    order_result: PreliminaryOrderResult,
+    order_result: SynchronizationResult,
     title: str = "",
     figsize: tuple[float, float] = (14, 10),
 ) -> Figure:
@@ -83,8 +83,8 @@ def plot_pipeline_summary(
         Resultado CPCA inicial (antes de eliminar outliers).
     outlier_result : OutlierRefinementResult
         Salida de OutlierRefiner.
-    order_result : PreliminaryOrderResult
-        Salida de PreliminaryOrderEstimator.
+    order_result : SynchronizationResult
+        Salida de CircularSynchronizer.
     title : str
         Título global de la figura.
     figsize : tuple
@@ -392,7 +392,7 @@ def plot_expression_overview(
     ----------
     expr_ordered : pd.DataFrame
         Matriz de expresión ya ordenada por fase circular
-        (p. ej., ``PreliminaryOrderResult.expr_ordered``).
+        (p. ej., ``SynchronizationResult.expr_ordered``).
     core_genes : list[str]
         Símbolos de genes reloj core para resaltar.
     circular_scale : np.ndarray

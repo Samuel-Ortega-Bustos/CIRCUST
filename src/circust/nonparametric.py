@@ -22,7 +22,7 @@ Equivalente en R
 
 Posicion en el pipeline
 -----------------------
-    PreliminaryOrderEstimator  →  **NonParametricScorer**  →  CandidateSelector
+    CircularSynchronizer  →  **NonParametricScorer**  →  CandidateSelector
 """
 from __future__ import annotations
 

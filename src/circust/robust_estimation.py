@@ -46,7 +46,7 @@ from circust.cpca import CPCA
 from circust.fitting.fmm import FMMModel
 from circust.fitting.cosinor import CosinorModel
 from circust.nonparametric import circular_unimodal_fit
-from circust.preliminary_order import PreliminaryOrderEstimator
+from circust.synchronizer import CircularSynchronizer
 from circust.random_selection import RandomSelectionResult
 
 
@@ -130,8 +130,8 @@ class RobustEstimator:
 
     Parametros
     ----------
-    arntl_gene, dbp_gene, cry1_gene : str
-        Genes ancla pasados a :class:`PreliminaryOrderEstimator`.
+    anchor_gene, direction_gene, consistency_gene : str
+        Genes ancla pasados a :class:`CircularSynchronizer`.
 
     fmm_length_alpha_grid, fmm_length_omega_grid, fmm_num_reps : int
         Hiperparametros del modelo FMM en cada re-ajuste.
@@ -142,17 +142,17 @@ class RobustEstimator:
 
     def __init__(
         self,
-        arntl_gene:           str  = "ARNTL",
-        dbp_gene:             str  = "DBP",
-        cry1_gene:            str  = "CRY1",
+        anchor_gene:          str  = "ARNTL",
+        direction_gene:       str  = "DBP",
+        consistency_gene:     str  = "CRY1",
         fmm_length_alpha_grid: int = 48,
         fmm_length_omega_grid: int = 24,
         fmm_num_reps:         int  = 3,
         verbose:              bool = True,
     ) -> None:
-        self.arntl_gene = arntl_gene
-        self.dbp_gene   = dbp_gene
-        self.cry1_gene  = cry1_gene
+        self.anchor_gene      = anchor_gene
+        self.direction_gene   = direction_gene
+        self.consistency_gene = consistency_gene
         self._fmm_kwargs = dict(
             length_alpha_grid=fmm_length_alpha_grid,
             length_omega_grid=fmm_length_omega_grid,
@@ -205,11 +205,11 @@ class RobustEstimator:
 
         fmm   = FMMModel(**self._fmm_kwargs)
         cosm  = CosinorModel()
-        prelim = PreliminaryOrderEstimator(
-            arntl_gene=self.arntl_gene,
-            dbp_gene=self.dbp_gene,
-            cry1_gene=self.cry1_gene,
-            verbose=False,
+        prelim = CircularSynchronizer(
+            anchor_gene      = self.anchor_gene,
+            direction_gene   = self.direction_gene,
+            consistency_gene = self.consistency_gene,
+            verbose          = False,
         )
 
         sample_orders   = np.zeros((K, n_samp), dtype=int)
@@ -253,7 +253,7 @@ class RobustEstimator:
                 fmm_fits[g]   = fr
                 peak_times[g] = fr.peak_time
 
-            # Refined namespace para reusar PreliminaryOrderEstimator
+            # Refined namespace para reusar CircularSynchronizer
             fake_refined = SimpleNamespace(
                 cpca_final          = SimpleNamespace(circular_scale=esc_k),
                 expr_norm_final     = top_k,
