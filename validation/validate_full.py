@@ -48,7 +48,6 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from circust.preprocessing   import Preprocessor, load_expression_matrix
 from circust.cpca             import CPCA
-from circust.outlier          import OutlierRefiner
 from circust.synchronizer     import CircularSynchronizer
 from circust.nonparametric    import NonParametricScorer
 from circust.candidate_selection import CandidateSelector
@@ -188,17 +187,10 @@ def validate_stages_1_2(
     t0   = time.perf_counter()
     cpca = CPCA(core_genes=CORE_GENES, verbose=False).run(prep.expr_norm)
     timings["cpca"] = time.perf_counter() - t0
-    print(f"  CPCA: {timings['cpca']:.2f}s")
+    print(f"  CPCA + outliers + re-CPCA: {timings['cpca']:.2f}s")
+    print(cpca.summary())
 
     if check_ref:
-        r_order = _load_ref("r_sample_order.csv")["sample_order"].values - 1
-        _cmp_arrays(cpca.sample_order, r_order, TOL_EXACT,
-                    "Orden muestras CPCA", rep)
-
-        r_scale = _load_ref("r_circular_scale.csv")["circular_scale"].values
-        _cmp_arrays(cpca.circular_scale, r_scale, TOL_STRICT,
-                    "Escala circular CPCA", rep)
-
         r_var = _load_ref("r_variance.csv")["variance_explained"].values
         _cmp_arrays(cpca.variance_explained, r_var, TOL_STRICT,
                     "Varianza explicada", rep)
@@ -211,36 +203,24 @@ def validate_stages_1_2(
             rep.check(f"Correlacion {col.upper()}",
                       abs(corr) > 0.999, f"|corr|={abs(corr):.6f}")
 
-    # ── Deteccion de outliers + re-CPCA ──────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("  DETECCION DE OUTLIERS + RE-CPCA")
-    print("=" * 60)
-
-    t0      = time.perf_counter()
-    refined = OutlierRefiner(verbose=False).run(cpca, prep.expr_norm)
-    timings["outlier"] = time.perf_counter() - t0
-    print(f"  Outliers + re-CPCA: {timings['outlier']:.2f}s")
-    print(refined.summary())
-
-    if check_ref:
         r_outs = _load_ref("r_outlier_samples.csv")["sample_idx"].values
         r_outs_set = set(r_outs - 1) if len(r_outs) > 0 else set()
-        _cmp_sets(set(refined.samples_dropped), r_outs_set,
+        _cmp_sets(set(cpca.samples_dropped), r_outs_set,
                   "Muestras outlier", rep)
 
         r_order2 = _load_ref("r_sample_order_2.csv")["sample_order"].values - 1
-        _cmp_arrays(refined.cpca_final.sample_order, r_order2, TOL_EXACT,
-                    "Orden muestras CPCA2", rep)
+        _cmp_arrays(cpca.sample_order, r_order2, TOL_EXACT,
+                    "Orden muestras CPCA (final)", rep)
 
         r_scale2 = _load_ref("r_circular_scale_2.csv")["circular_scale"].values
-        _cmp_arrays(refined.cpca_final.circular_scale, r_scale2, TOL_STRICT,
-                    "Escala circular CPCA2", rep)
+        _cmp_arrays(cpca.circular_scale, r_scale2, TOL_STRICT,
+                    "Escala circular CPCA (final)", rep)
 
         r_peaks_after = _load_ref("r_peaks_after.csv")
         for _, row in r_peaks_after.iterrows():
             gene = row["gene"]
-            if gene in refined.fmm_peak_times_final:
-                py_pk = refined.fmm_peak_times_final[gene]
+            if gene in cpca.fmm_peak_times_final:
+                py_pk = cpca.fmm_peak_times_final[gene]
                 r_pk  = row["fmm_peak"]
                 diff  = min(abs(py_pk - r_pk), 2 * pi - abs(py_pk - r_pk))
                 rep.check(f"FMM peak (post-outlier): {gene}",
@@ -249,8 +229,8 @@ def validate_stages_1_2(
 
         r_r2 = pd.read_csv(REF_DIR / "r_r2_after.csv", index_col=0)
         for gene in CORE_GENES:
-            if gene in refined.fmm_fits_final:
-                py_r2 = refined.fmm_fits_final[gene].r2
+            if gene in cpca.fmm_fits_final:
+                py_r2 = cpca.fmm_fits_final[gene].r2
                 r_r2v = float(r_r2.loc[gene, "r2_fmm"])
                 rep.check(f"R² (post-outlier): {gene}",
                            abs(py_r2 - r_r2v) < TOL_FMM,
@@ -262,7 +242,7 @@ def validate_stages_1_2(
     print("=" * 60)
 
     t0        = time.perf_counter()
-    pre_order = CircularSynchronizer(verbose=False).run(refined, CORE_GENES)
+    pre_order = CircularSynchronizer(verbose=False).run(cpca, CORE_GENES)
     timings["preliminary_order"] = time.perf_counter() - t0
     print(f"  Orden preliminar: {timings['preliminary_order']:.2f}s")
     print(pre_order.summary())

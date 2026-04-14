@@ -71,7 +71,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 # ── Importaciones del pipeline CIRCUST ─────────────────────────────────────
 from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
-from circust.outlier import OutlierRefiner
 from circust.synchronizer import CircularSynchronizer
 from circust.nonparametric import NonParametricScorer
 from circust.candidate_selection import CandidateSelector
@@ -111,8 +110,7 @@ DEFAULT_CONFIG = {
     "tight_radius":           0.10,     # umbral radial primario
     "loose_radius":           0.15,     # umbral radial alternativo
     # Detección de outliers
-    "outlier_multi_threshold": 3.0,     # |res. estand.| multivariante
-    "outlier_uni_threshold":   4.0,     # |res. estand.| univariante
+    "outlier_multi_threshold": 3.0,     # |res. estand.| multivariante (Sec. 3.3 suplementario)
     "max_outlier_fraction":    0.05,    # límite máximo de muestras eliminables
     # Ajuste FMM
     "fmm_alpha_grid":         48,       # resolución de la rejilla alpha
@@ -292,11 +290,16 @@ def main() -> None:
     _banner("Etapa 1.1: PCA Circular")
 
     cpca = CPCA(
-        core_genes=core_genes,
-        n_outlier_candidates=cfg["n_outlier_candidates"],
-        tight_radius=cfg["tight_radius"],
-        loose_radius=cfg["loose_radius"],
-        verbose=True,
+        core_genes            = core_genes,
+        n_outlier_candidates  = cfg["n_outlier_candidates"],
+        tight_radius          = cfg["tight_radius"],
+        loose_radius          = cfg["loose_radius"],
+        multi_threshold       = cfg["outlier_multi_threshold"],
+        max_outlier_fraction  = cfg["max_outlier_fraction"],
+        fmm_length_alpha_grid = cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid = cfg["fmm_omega_grid"],
+        fmm_num_reps          = cfg["fmm_reps"],
+        verbose               = True,
     )
     cpca_result = cpca.run(prep.expr_norm)
 
@@ -314,34 +317,16 @@ def main() -> None:
         fig = plot_gene_panels(cpca_result, title=label)
         _save_figure(fig, figures_dir / "03_cpca_gene_panels.png", args.dpi)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Etapa 1.2 — Refinamiento de outliers
-    # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 1.2: Refinamiento de Outliers")
-
-    refiner = OutlierRefiner(
-        multi_threshold=cfg["outlier_multi_threshold"],
-        uni_threshold=cfg["outlier_uni_threshold"],
-        max_outlier_fraction=cfg["max_outlier_fraction"],
-        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
-        fmm_length_omega_grid=cfg["fmm_omega_grid"],
-        fmm_num_reps=cfg["fmm_reps"],
-        verbose=True,
-    )
-    outlier_result = refiner.run(cpca_result, prep.expr_norm)
-
-    _save_text(outlier_result.summary(), results_dir / "outlier_summary.txt")
-
     if not args.no_plots:
         print("  Generando gráficos diagnósticos de outliers ...")
 
-        fig = plot_core_gene_fits(outlier_result, cpca_initial=cpca_result, title=label)
+        fig = plot_core_gene_fits(cpca_result, title=label)
         _save_figure(fig, figures_dir / "04_core_gene_fits.png", args.dpi)
 
-        fig = plot_residual_strips(outlier_result, title=label)
+        fig = plot_residual_strips(cpca_result, title=label)
         _save_figure(fig, figures_dir / "05_residual_strips.png", args.dpi)
 
-        fig = plot_residual_heatmap(outlier_result, title=label)
+        fig = plot_residual_heatmap(cpca_result, title=label)
         _save_figure(fig, figures_dir / "06_residual_heatmap.png", args.dpi)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -349,13 +334,13 @@ def main() -> None:
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 2: Ordenamiento Circular Preliminar")
 
-    core_genes_found = list(outlier_result.cpca_final.core_genes_found)
+    core_genes_found = list(cpca_result.core_genes_found)
     estimator = CircularSynchronizer(
         anchor_gene    = cfg["anchor_gene"],
         direction_gene = cfg["direction_gene"],
         verbose        = True,
     )
-    order_result = estimator.run(outlier_result, core_genes_found)
+    order_result = estimator.run(cpca_result, core_genes_found)
 
     _save_text(order_result.summary(), results_dir / "preliminary_order_summary.txt")
 
@@ -595,7 +580,7 @@ def main() -> None:
         _banner("Generando figura resumen del pipeline")
 
         fig = plot_pipeline_summary(
-            cpca_result, outlier_result, order_result,
+            cpca_result, order_result,
             title=label,
         )
         _save_figure(fig, figures_dir / "12_pipeline_summary.png", args.dpi)
@@ -609,8 +594,8 @@ def main() -> None:
     print(f"  Dataset            : {data_path.name}")
     print(f"  Genes (entrada)    : {prep.n_genes_in}")
     print(f"  Genes (filtrados)  : {prep.n_genes_out}")
-    print(f"  Muestras (limpias) : {outlier_result.expr_norm_final.shape[1]}")
-    print(f"  Outliers eliminados: {len(outlier_result.samples_dropped)}")
+    print(f"  Muestras (limpias) : {cpca_result.expr_norm_final.shape[1]}")
+    print(f"  Outliers eliminados: {len(cpca_result.samples_dropped)}")
     print(f"  Inversión direcc.  : {order_result.direction_flipped}")
     print(f"  Mediana R² NP      : {float(np.median(np_result.r2)):.3f}")
     print(f"  Genes candidatos   : {len(candidate_result.gene_names)}")

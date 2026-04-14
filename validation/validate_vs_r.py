@@ -24,7 +24,6 @@ import pandas as pd
 # ── project imports ──────────────────────────────────────────────────────────
 from circust.preprocessing import Preprocessor, load_expression_matrix
 from circust.cpca import CPCA
-from circust.outlier import OutlierRefiner
 from circust.synchronizer import CircularSynchronizer
 from circust.core_genes import SEED_GENES_LARRIBA
 
@@ -224,18 +223,17 @@ def main():
     print("="*60)
 
     t0 = time.time()
-    refined = OutlierRefiner(verbose=False).run(cpca, prep.expr_norm)
+    # Outlier detection is now integrated into CPCA.run() above
     t_outlier = time.time() - t0
-    print(f"  Outlier detection + re-CPCA: {t_outlier:.2f}s")
-    print(refined.summary())
+    print(f"  Outlier detection + re-CPCA: (integrated in CPCA.run())")
 
     # -- FMM R² (initial fits) --
     # NOTE: FMM params have α ± 2π equivalence and multiple local optima.
     # We compare R² and peak times instead of raw params.
     r_fmm_init = pd.read_csv(REF_DIR / "r_fmm_params_initial.csv", index_col=0)
     for gene in CORE_GENES:
-        if gene in refined.fmm_fits_initial:
-            fr = refined.fmm_fits_initial[gene]
+        if gene in cpca.fmm_fits_initial:
+            fr = cpca.fmm_fits_initial[gene]
             report.check(f"FMM initial R2: {gene}",
                          fr.r2 > 0.3,
                          f"py_r2={fr.r2:.4f}")
@@ -245,8 +243,8 @@ def main():
     r_peaks_core = r_peaks[r_peaks["gene"].isin(CORE_GENES)]
     for _, row in r_peaks_core.iterrows():
         gene = row["gene"]
-        if gene in refined.fmm_peak_times_initial:
-            py_pk = refined.fmm_peak_times_initial[gene]
+        if gene in cpca.fmm_fits_initial:
+            py_pk = cpca.fmm_fits_initial[gene].peak_time
             r_pk  = row["fmm_peak"]
             # Circular distance
             diff  = min(abs(py_pk - r_pk), 2*np.pi - abs(py_pk - r_pk))
@@ -258,24 +256,24 @@ def main():
     r_outs = load_ref("r_outlier_samples.csv")["sample_idx"].values
     # R is 1-based
     r_outs_set = set(r_outs - 1) if len(r_outs) > 0 else set()
-    py_outs_set = set(refined.samples_dropped)
+    py_outs_set = set(cpca.samples_dropped)
     compare_sets(py_outs_set, r_outs_set, "Outlier samples", report)
 
     # -- CPCA2 after outlier removal --
     r_order2 = load_ref("r_sample_order_2.csv")["sample_order"].values - 1
-    compare_arrays(refined.cpca_final.sample_order, r_order2, TOL_EXACT,
+    compare_arrays(cpca.sample_order, r_order2, TOL_EXACT,
                    "CPCA2 sample order", report)
 
     r_scale2 = load_ref("r_circular_scale_2.csv")["circular_scale"].values
-    compare_arrays(refined.cpca_final.circular_scale, r_scale2, TOL_STRICT,
+    compare_arrays(cpca.circular_scale, r_scale2, TOL_STRICT,
                    "CPCA2 circular scale", report)
 
     # -- FMM peaks (after outlier removal) --
     r_peaks_after = load_ref("r_peaks_after.csv")
     for _, row in r_peaks_after.iterrows():
         gene = row["gene"]
-        if gene in refined.fmm_peak_times_final:
-            py_pk = refined.fmm_peak_times_final[gene]
+        if gene in cpca.fmm_peak_times_final:
+            py_pk = cpca.fmm_peak_times_final[gene]
             r_pk  = row["fmm_peak"]
             diff  = min(abs(py_pk - r_pk), 2*np.pi - abs(py_pk - r_pk))
             report.check(f"FMM peak after: {gene}",
@@ -285,8 +283,8 @@ def main():
     # -- R² after --
     r_r2 = pd.read_csv(REF_DIR / "r_r2_after.csv", index_col=0)
     for gene in CORE_GENES:
-        if gene in refined.fmm_fits_final:
-            py_r2 = refined.fmm_fits_final[gene].r2
+        if gene in cpca.fmm_fits_final:
+            py_r2 = cpca.fmm_fits_final[gene].r2
             r_r2v = r_r2.loc[gene, "r2_fmm"]
             report.check(f"R2 after: {gene}",
                          abs(py_r2 - r_r2v) < TOL_FMM,
@@ -300,7 +298,7 @@ def main():
     print("="*60)
 
     t0 = time.time()
-    pre_order = CircularSynchronizer(verbose=False).run(refined, CORE_GENES)
+    pre_order = CircularSynchronizer(verbose=False).run(cpca, CORE_GENES)
     t_preord = time.time() - t0
     print(f"  Preliminary ordering: {t_preord:.2f}s")
     print(pre_order.summary())

@@ -35,7 +35,6 @@ from matplotlib.lines import Line2D
 import pandas as pd
 
 from circust.cpca import CPCAResult
-from circust.outlier import OutlierRefinementResult
 from circust.synchronizer import SynchronizationResult
 
 
@@ -61,7 +60,6 @@ _HOUR_LABELS_8 = [
 
 def plot_pipeline_summary(
     cpca_result: CPCAResult,
-    outlier_result: OutlierRefinementResult,
     order_result: SynchronizationResult,
     title: str = "",
     figsize: tuple[float, float] = (14, 10),
@@ -80,9 +78,7 @@ def plot_pipeline_summary(
     Parámetros
     ----------
     cpca_result : CPCAResult
-        Resultado CPCA inicial (antes de eliminar outliers).
-    outlier_result : OutlierRefinementResult
-        Salida de OutlierRefiner.
+        Salida de ``CPCA.run()`` (incluye CPCA + deteccion de outliers).
     order_result : SynchronizationResult
         Salida de CircularSynchronizer.
     title : str
@@ -104,8 +100,8 @@ def plot_pipeline_summary(
 
     # ── Panel B: heatmap de residuos (compacto) ──────────────────────────
     ax_b = fig.add_subplot(gs[0, 1])
-    _draw_residual_compact(ax_b, outlier_result)
-    n_out = len(outlier_result.samples_dropped)
+    _draw_residual_compact(ax_b, cpca_result)
+    n_out = len(cpca_result.samples_dropped)
     ax_b.set_title(
         f"B. Standardised FMM residuals  ({n_out} outliers)",
         fontsize=10, fontweight="bold", pad=6,
@@ -139,28 +135,23 @@ def _draw_pc_scatter(ax, cpca: "CPCAResult") -> None:
     """Dispersión PC mini para el panel resumen."""
     pc1, pc2 = cpca.pc1, cpca.pc2
     var = cpca.variance_explained
+    dropped = set(cpca.samples_dropped)
 
-    # Todas las muestras
-    ax.scatter(pc1, pc2, s=10, color="#CCCCCC", edgecolors="#999999",
-               linewidths=0.3, zorder=3)
+    # Todas las muestras (normales en gris, eliminadas en rojo)
+    normal_mask  = np.array([i not in dropped for i in range(len(pc1))])
+    dropped_mask = ~normal_mask
 
-    # Candidatos a outlier
-    conf = set(cpca.outlier_idx.tolist())
-    colours = ["#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
-               "#FF7F00", "#A65628", "#F781BF", "#66C2A5"]
-    for rank, idx in enumerate(cpca.outlier_candidate_idx):
-        col = colours[rank % len(colours)]
-        face = col if idx in conf else "none"
-        ax.scatter(pc1[idx], pc2[idx], s=40, marker="s",
-                   facecolors=face, edgecolors=col, linewidths=1.2, zorder=5)
+    ax.scatter(pc1[normal_mask], pc2[normal_mask], s=10, color="#CCCCCC",
+               edgecolors="#999999", linewidths=0.3, zorder=3)
+    if dropped_mask.any():
+        ax.scatter(pc1[dropped_mask], pc2[dropped_mask], s=40, marker="x",
+                   color="#E41A1C", linewidths=1.4, zorder=5,
+                   label=f"{dropped_mask.sum()} outlier(s)")
+        ax.legend(fontsize=6, loc="upper right", framealpha=0.7)
 
-    # Círculos de umbral
+    # Círculos de umbral radial (0.10 y 0.15)
     theta = np.linspace(0, 2 * np.pi, 200)
-    used_loose = cpca.used_loose_radius
-    active_r = 0.15 if used_loose else 0.10
-    for r in [0.10, 0.15]:
-        colour = "#E41A1C" if r == active_r else "#AAAAAA"
-        lw = 1.2 if r == active_r else 0.6
+    for r, colour, lw in [(0.10, "#E41A1C", 1.2), (0.15, "#AAAAAA", 0.6)]:
         ax.plot(np.cos(theta) * r, np.sin(theta) * r,
                 "--", color=colour, linewidth=lw, zorder=1)
 

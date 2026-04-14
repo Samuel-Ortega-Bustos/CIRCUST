@@ -50,7 +50,7 @@ import pandas as pd
 from dataclasses import dataclass, field
 from math import pi
 
-from circust.outlier import OutlierRefinementResult
+from circust.cpca import CPCAResult
 from circust.fitting.fmm import FMMModel
 from circust.fitting.rhythm_model import FitResult
 
@@ -238,7 +238,7 @@ class CircularSynchronizer:
 
     def run(
         self,
-        refined:         OutlierRefinementResult,
+        refined:         CPCAResult,
         core_genes:      list[str],
         reference_peaks: dict[str, float] | None = None,
     ) -> SynchronizationResult:
@@ -247,8 +247,8 @@ class CircularSynchronizer:
 
         Parametros
         ----------
-        refined : OutlierRefinementResult
-            Salida de ``OutlierRefiner.run()``.
+        refined : CPCAResult
+            Salida de ``CPCA.run()``.
 
         core_genes : list de str
             Lista ordenada de simbolos de genes reloj centrales.
@@ -275,7 +275,7 @@ class CircularSynchronizer:
 
     def _manual_sync(
         self,
-        refined:    OutlierRefinementResult,
+        refined:    CPCAResult,
         core_genes: list[str],
     ) -> SynchronizationResult:
         """Sincronizacion manual en dos pasos usando genes ancla."""
@@ -325,7 +325,7 @@ class CircularSynchronizer:
 
     def _hybrid_sync(
         self,
-        refined:         OutlierRefinementResult,
+        refined:         CPCAResult,
         core_genes:      list[str],
         reference_peaks: dict[str, float] | None,
     ) -> SynchronizationResult:
@@ -368,7 +368,7 @@ class CircularSynchronizer:
 
     def _pre_order(
         self,
-        refined:    OutlierRefinementResult,
+        refined:    CPCAResult,
         core_genes: list[str],
     ) -> tuple:
         """
@@ -386,7 +386,7 @@ class CircularSynchronizer:
         names_night : list[str]   — genes con pico en [π, 2π)
         reversed    : bool        — True si la direccion se invirtio
         """
-        circular_scale = refined.cpca_final.circular_scale
+        circular_scale = refined.circular_scale
         expr_ordered   = refined.expr_norm_final
         fmm_fits       = refined.fmm_fits_final
         peak_times_fin = refined.fmm_peak_times_final

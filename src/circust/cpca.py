@@ -1,135 +1,156 @@
 """
 circust/cpca.py
 ===============
-Analisis de Componentes Principales Circular (CPCA).
+Etapas 1.1 + 1.2: Ordenamiento circular (CPCA) y deteccion de outliers.
 
 Que es CPCA?
 ------------
-El PCA estandar sobre una matriz de expresion genica da componentes principales
-que explican varianza lineal. CPCA va un paso mas alla: toma los loadings de
-PC1 y PC2 — un valor por muestra — y los trata como coordenadas (x, y) en
-un plano 2D. Cada muestra se proyecta sobre el circulo unitario mediante
-un angulo:
+PCA sobre los 12 genes core del reloj. Los loadings de PC1 y PC2 de cada
+muestra se tratan como coordenadas (x, y) en el plano; el angulo:
 
-    phi = atan2(PC2_loading, PC1_loading)   en [0, 2*pi)
+    phi = atan2(PC2, PC1)   en [0, 2pi)
 
-Ordenar las muestras por phi da un *ordenamiento circular* que refleja el
-ritmo circadiano subyacente. Las muestras cercanas al origen (pequena
-distancia desde (0,0) en el espacio PC1-PC2) son outliers potenciales
-porque no participan fuertemente en la oscilacion dominante.
+da un *ordenamiento circular* que refleja el ritmo circadiano subyacente.
+Muestras cercanas al origen tienen norma pequena y son outliers potenciales.
+
+Deteccion de outliers (Seccion 3.3 del suplementario de CIRCUST)
+-----------------------------------------------------------------
+Dos criterios en logica OR — una muestra se elimina si viola cualquiera:
+
+    1. Radial CPCA:  LEi < tight_radius (0.10)
+       Muestras con distancia al origen en espacio PC1-PC2 muy pequena
+       disrumpen la estructura circular y reflejan desalineaciones individuales.
+
+    2. Residuos FMM: |ri| > multi_threshold (3.0)  para cualquier gen core
+       Detecta errores de medicion u otras anomalias comunes entre genes.
+
+Si se detectan outliers, se eliminan, se renormaliza la matriz core y se
+re-ejecuta CPCA para obtener el ordenamiento final limpio.
 
 Posicion en el pipeline
 -----------------------
-    preprocessing.py  ->  cpca.py  ->  outlier.py  ->  ...
-
-Entrada: PreprocessingResult.expr_norm  (matriz normalizada completa)
-Salida:  CPCAResult                     (orden de muestras + flags de outliers)
+    Preprocessor  ->  CPCA  ->  CircularSynchronizer  ->  ...
 """
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
+from typing import Optional
 
 from circust.core_genes import SEED_GENES_DEFAULT
+from circust.fitting.fmm import FMMModel
+from circust.fitting.cosinor import CosinorModel
+from circust.fitting.rhythm_model import FitResult
+from circust.preprocessing import normalise_matrix
+
 
 # ===========================================================================
-# Dataclass de resultados
+# Dataclass de resultado
 # ===========================================================================
 
 @dataclass
 class CPCAResult:
     """
-    Todos los resultados producidos por :class:`CPCA`.
+    Salida de :class:`CPCA` — incluye el ordenamiento circular final y la
+    deteccion de outliers (Etapas 1.1 + 1.2 del pipeline).
 
-    Atributos
-    ---------
+    Campos del pipeline (usados por etapas posteriores)
+    ---------------------------------------------------
     sample_order : np.ndarray de int, forma (n_muestras,)
-        Indices enteros que ordenan las muestras por su fase circular phi.
-        Aplicar a cualquier eje de columnas de matriz para obtener el orden CPCA.
-        Equivalente en R: ``orderCPCA8`` (obtainCPCA13 linea 3816).
+        Indices que ordenan las muestras por fase circular final.
+        Equivalente en R: ``orderCPCA8`` (final, tras eliminar outliers).
 
     circular_scale : np.ndarray de float, forma (n_muestras,)
-        Valores de phi ordenados en [0, 2*pi). Es el eje temporal circular
-        usado por todos los pasos de ajuste posteriores.
-        Equivalente en R: ``escalaPhi8`` (obtainCPCA13 linea 3817).
+        Valores de phi ordenados en [0, 2pi). Eje temporal para ajustes.
+        Equivalente en R: ``escalaPhi8`` (final).
 
-    pc1 : np.ndarray de float, forma (n_muestras,)
-        Loadings de PC1 — un valor por muestra.
-        Equivalente en R: ``eigen18 = cp8$rotation[,1]`` (linea 3810).
-
-    pc2 : np.ndarray de float, forma (n_muestras,)
-        Loadings de PC2 — un valor por muestra.
-        Equivalente en R: ``eigen28 = cp8$rotation[,2]`` (linea 3811).
-
-    pc3 : np.ndarray de float, forma (n_muestras,)
-        Loadings de PC3 — un valor por muestra.
-        Equivalente en R: ``eigen38 = cp8$rotation[,3]`` (linea 3812).
+    core_genes_found : list[str]
+        Genes centrales presentes en la matriz y usados para CPCA.
 
     variance_explained : np.ndarray de float, forma (3,)
-        Fraccion de varianza total explicada por PC1, PC2, PC3.
-        Equivalente en R: ``varPer8`` (lineas 3807-3809).
+        Fraccion de varianza explicada por PC1, PC2, PC3 (CPCA final).
 
-    outlier_candidate_idx : np.ndarray de int
-        Indices de columna (en la matriz ORIGINAL) de las N_OUTLIER_CANDIDATES
-        muestras con menor distancia PC1-PC2 al origen.
-        Equivalente en R: ``obs8 = order(d8)[1:nOuts]`` (linea 3824).
+    expr_norm_final : pd.DataFrame, forma (n_genes, n_muestras_limpias)
+        Matriz de expresion completa con muestras outlier eliminadas,
+        reordenada por fase circular y renormalizada.
+        Equivalente en R: ``mFullTissueNorm`` (linea 4099).
 
-    outlier_idx : np.ndarray de int
-        Subconjunto de outlier_candidate_idx que realmente caen dentro del
-        radio tight (<=0.10) o loose (<=0.15).
-        Equivalente en R: los indices recopilados en el bucle s8 (lineas 3831-3846).
+    core_norm_final : pd.DataFrame, forma (n_genes_core, n_muestras_limpias)
+        Submatriz core normalizada, sin outliers, ordenada por fase.
+        Equivalente en R: ``mTissueCoreGNorm`` (linea 4085).
 
-    outlier_positions_in_order : np.ndarray de int
-        Posicion de cada outlier dentro de ``sample_order`` (no en la
-        matriz original). Usado por graficos de residuos posteriores.
-        Equivalente en R: ``outs = match(obs8[1:ss8], orderCPCA8)`` (linea 3872).
+    fmm_fits_final : dict[str, FitResult]
+        Ajustes FMM sobre genes core usando el ordenamiento final.
+        Equivalente en R: ``allParAfter`` (lineas 4109-4136).
 
-    n_outliers : int
-        Numero de outliers confirmados (= len(outlier_idx)).
-        Equivalente en R: ``ss8`` (linea 3847).
+    fmm_peak_times_final : dict[str, float]
+        Tiempos de pico FMM (via compUU) para cada gen core (final).
+        Equivalente en R: ``phisFMMAfter`` (linea 4118).
 
-    used_loose_radius : bool
-        True si se necesito el radio de respaldo 0.15 porque ninguna muestra
-        clasifico a 0.10.
-        Equivalente en R: ``rojo8`` (linea 3818 / 3843).
+    samples_dropped : list[int]
+        Indices originales de columna de las muestras eliminadas.
+        Equivalente en R: ``dropTissueOut`` (linea 4083).
 
-    core_genes_found : List[str]
-        Los genes centrales que estaban realmente presentes en la matriz.
-        (Generalizacion sobre R: R asume que los 12 siempre estan presentes.)
+    fmm_outliers : list[int]
+        Subconjunto de samples_dropped detectados exclusivamente por
+        el criterio de residuos FMM (|ri| > multi_threshold).
 
-    core_matrix : pd.DataFrame, forma (n_genes_centrales, n_muestras)
-        La submatriz normalizada de genes centrales usada para PCA, con
-        simbolos genicos como indice. Almacenada para que plot_gene_panels()
-        pueda dibujar trazas de expresion sin re-ejecutar la extraccion.
-        Es None si CPCA se ejecuto con store_core_matrix=False.
+    Campos de diagnostico (para visualizacion)
+    ------------------------------------------
+    pc1, pc2, pc3 : np.ndarray
+        Loadings de PC1/PC2/PC3 del CPCA final (un valor por muestra).
+
+    std_residuals_fmm : pd.DataFrame o None
+        Residuos FMM estandarizados (genes+PCs x muestras, orden inicial).
+        Equivalente en R: ``resParStTissue``.
+
+    fmm_fits_initial : dict[str, FitResult]
+        Ajustes FMM sobre genes core + PC1/PC2/PC3 en orden CPCA inicial.
+        Equivalente en R: ``fitParCore``.
+
+    cosinor_fits_initial : dict[str, FitResult]
+        Ajustes Cosinor sobre genes core + PC1/PC2/PC3 en orden inicial.
+        Equivalente en R: ``fitCosCore``.
     """
 
-    sample_order:              np.ndarray
-    circular_scale:            np.ndarray
-    pc1:                       np.ndarray
-    pc2:                       np.ndarray
-    pc3:                       np.ndarray
-    variance_explained:        np.ndarray
-    outlier_candidate_idx:     np.ndarray
-    outlier_idx:               np.ndarray
-    outlier_positions_in_order: np.ndarray
-    n_outliers:                int
-    used_loose_radius:         bool
-    core_genes_found:          list[str] = field(default_factory=list)
-    core_matrix:               pd.DataFrame = field(default_factory=pd.DataFrame)
+    # ── Pipeline ─────────────────────────────────────────────────────────
+    sample_order:          np.ndarray
+    circular_scale:        np.ndarray
+    core_genes_found:      list[str]
+    variance_explained:    np.ndarray
+    expr_norm_final:       pd.DataFrame
+    core_norm_final:       pd.DataFrame
+    fmm_fits_final:        dict
+    fmm_peak_times_final:  dict
+    samples_dropped:       list[int]   = field(default_factory=list)
+    fmm_outliers:          list[int]   = field(default_factory=list)
+
+    # ── Diagnostico ───────────────────────────────────────────────────────
+    pc1:                   np.ndarray                = field(default_factory=lambda: np.array([]))
+    pc2:                   np.ndarray                = field(default_factory=lambda: np.array([]))
+    pc3:                   np.ndarray                = field(default_factory=lambda: np.array([]))
+    std_residuals_fmm:     Optional[pd.DataFrame]    = None
+    fmm_fits_initial:      dict                      = field(default_factory=dict)
+    cosinor_fits_initial:  dict                      = field(default_factory=dict)
 
     def summary(self) -> str:
+        n_cpca = len(self.samples_dropped) - len(self.fmm_outliers)
         lines = [
-            "=== Resumen CPCA ===",
-            f"  Genes centrales usados : {len(self.core_genes_found)}  {self.core_genes_found}",
-            f"  Varianza PC1           : {self.variance_explained[0]:.1%}",
-            f"  Varianza PC2           : {self.variance_explained[1]:.1%}",
-            f"  Varianza PC3           : {self.variance_explained[2]:.1%}",
-            f"  Candidatos a outlier   : {len(self.outlier_candidate_idx)}",
-            f"  Outliers confirmados   : {self.n_outliers}"
-            + (" (se uso radio relajado)" if self.used_loose_radius else ""),
+            "=== Resumen CPCA + Deteccion de Outliers ===",
+            f"  Genes core usados           : {len(self.core_genes_found)}  {self.core_genes_found}",
+            f"  Varianza PC1 / PC2 / PC3    : "
+            f"{self.variance_explained[0]:.1%} / "
+            f"{self.variance_explained[1]:.1%} / "
+            f"{self.variance_explained[2]:.1%}",
+            f"  Muestras eliminadas         : {len(self.samples_dropped)}",
+            f"    Criterio CPCA radial      : {n_cpca}",
+            f"    Criterio FMM residuos     : {len(self.fmm_outliers)}",
+            f"  Muestras finales            : {self.expr_norm_final.shape[1]}",
         ]
         return "\n".join(lines)
+
 
 # ===========================================================================
 # Clase CPCA
@@ -137,67 +158,87 @@ class CPCAResult:
 
 class CPCA:
     """
-    Extrae genes centrales y computa un ordenamiento circular de muestras via PCA.
+    Etapas 1.1 y 1.2: ordenamiento circular de muestras y deteccion de
+    outliers residuales, segun la Seccion 3.3 del suplementario de CIRCUST.
 
-    Esta clase implementa dos responsabilidades que estan acopladas en
-    el codigo R pero se mantienen separadas aqui por claridad:
-
-    1. **Extraccion de genes centrales** — extraer las 12 filas de genes
-       centrales del reloj de la matriz normalizada completa (R lineas 3954-3955).
-
-    2. **CPCA** — ejecutar PCA sobre la matriz de genes centrales centrada por
-       filas, proyectar cada muestra sobre el circulo unitario usando los
-       loadings de PC1 y PC2, ordenar muestras por su angulo phi, y marcar
-       outliers cercanos al origen (funcion R ``obtainCPCA13``, lineas 3804-3893).
-
-    Parametros
-    ----------
-    core_genes : lista de str, opcional
-        Simbolos genicos a usar como conjunto ancla circadiano.
-        Por defecto los 12 genes del articulo CIRCUST.
-        Se puede pasar una lista personalizada si se trabaja con un organismo
-        no humano o una anotacion genica diferente.
+    Parametros — CPCA
+    -----------------
+    core_genes : list[str], opcional
+        Genes ancla circadianos. Por defecto los 12 del articulo CIRCUST.
 
     n_outlier_candidates : int
-        Cuantas muestras examinar como outliers potenciales (las de menor
-        norma PC1-PC2). Valor R por defecto: 8.
+        Muestras a examinar como candidatas a outlier (menor norma PC1-PC2).
+        Por defecto: 8.
 
     tight_radius : float
-        Umbral de distancia primario. Muestras con norma <= tight_radius se
-        confirman como outliers. R: 0.10.
+        Umbral radial primario. Muestras con LEi <= tight_radius se confirman
+        como outliers CPCA. Por defecto: 0.10.
 
     loose_radius : float
-        Umbral de respaldo usado cuando ninguna muestra califica con tight_radius.
-        R: 0.15.
+        Umbral de respaldo cuando ninguna muestra califica con tight_radius.
+        Por defecto: 0.15.
+
+    Parametros — deteccion de outliers FMM
+    ---------------------------------------
+    multi_threshold : float
+        Umbral de residuo FMM estandarizado. Muestras con |ri| > multi_threshold
+        en cualquier gen core se declaran outliers. Por defecto: 3.0.
+
+    max_outlier_fraction : float
+        Limite maximo de muestras eliminables: ceil(fraccion x n_muestras).
+        Por defecto: 0.05.
+
+    Parametros — ajuste FMM
+    ------------------------
+    fmm_length_alpha_grid : int
+        Resolucion de rejilla para el parametro alfa de FMM. Por defecto: 48.
+
+    fmm_length_omega_grid : int
+        Resolucion de rejilla para el parametro omega de FMM. Por defecto: 24.
+
+    fmm_num_reps : int
+        Iteraciones de refinamiento FMM. Por defecto: 3.
 
     verbose : bool
-        Imprime mensajes de progreso si True.
+        Imprimir mensajes de progreso.
 
     Ejemplo
     -------
     >>> from circust.preprocessing import load_expression_matrix, Preprocessor
     >>> from circust.cpca import CPCA
     >>>
-    >>> matrix  = load_expression_matrix("data/raw/expression.csv")
-    >>> prep    = Preprocessor().run(matrix)
-    >>> result  = CPCA().run(prep.expr_norm)
+    >>> matrix = load_expression_matrix("data/raw/expression.csv")
+    >>> prep   = Preprocessor().run(matrix)
+    >>> result = CPCA().run(prep.expr_norm)
     >>> print(result.summary())
     """
 
     def __init__(
         self,
-        core_genes:           list[str] = None,
-        n_outlier_candidates: int       = 8,
-        tight_radius:         float     = 0.10,
-        loose_radius:         float     = 0.15,
-        verbose:              bool      = True,
+        core_genes:               list[str] = None,
+        # CPCA
+        n_outlier_candidates:     int       = 8,
+        tight_radius:             float     = 0.10,
+        loose_radius:             float     = 0.15,
+        # Outlier detection
+        multi_threshold:          float     = 3.0,
+        max_outlier_fraction:     float     = 0.05,
+        # FMM fitting
+        fmm_length_alpha_grid:    int       = 48,
+        fmm_length_omega_grid:    int       = 24,
+        fmm_num_reps:             int       = 3,
+        verbose:                  bool      = True,
     ) -> None:
-
-        self.core_genes           = core_genes if core_genes is not None else SEED_GENES_DEFAULT
-        self.n_outlier_candidates = n_outlier_candidates
-        self.tight_radius         = tight_radius
-        self.loose_radius         = loose_radius
-        self.verbose              = verbose
+        self.core_genes               = core_genes if core_genes is not None else SEED_GENES_DEFAULT
+        self.n_outlier_candidates     = n_outlier_candidates
+        self.tight_radius             = tight_radius
+        self.loose_radius             = loose_radius
+        self.multi_threshold          = multi_threshold
+        self.max_outlier_fraction     = max_outlier_fraction
+        self.fmm_length_alpha_grid    = fmm_length_alpha_grid
+        self.fmm_length_omega_grid    = fmm_length_omega_grid
+        self.fmm_num_reps             = fmm_num_reps
+        self.verbose                  = verbose
 
     # -----------------------------------------------------------------------
     # API publica
@@ -205,23 +246,90 @@ class CPCA:
 
     def run(self, expr_norm: pd.DataFrame) -> CPCAResult:
         """
-        Extrae genes centrales y computa el ordenamiento circular de muestras.
+        Ejecuta CPCA + deteccion de outliers sobre la matriz completa.
 
         Parametros
         ----------
-        expr_norm : pd.DataFrame
-            Matriz de expresion normalizada completa (genes x muestras,
-            valores en [-1, 1]). Es ``PreprocessingResult.expr_norm``.
+        expr_norm : pd.DataFrame, forma (n_genes, n_muestras)
+            Matriz de expresion normalizada completa (valores en [-1, 1]).
+            Es ``PreprocessingResult.expr_norm``.
 
         Devuelve
         --------
         CPCAResult
         """
-        # paso 1 — extraer filas de genes centrales de la matriz completa
+        self._log("=== Etapa 1.1: CPCA ===")
+
+        # ── Paso 1: extraer submatriz de genes core ───────────────────────
         core_matrix, genes_found = self._extract_core_genes(expr_norm)
 
-        # paso 2 — ejecutar CPCA sobre la matriz de genes centrales
-        result = self._run_cpca(core_matrix, genes_found)
+        # ── Paso 2: CPCA inicial ──────────────────────────────────────────
+        (sample_order, circular_scale,
+         pc1, pc2, pc3, var_exp,
+         outlier_idx) = self._cpca_step(core_matrix)
+
+        self._log(
+            f"  Varianza PC1/PC2/PC3: {var_exp[0]:.1%} / "
+            f"{var_exp[1]:.1%} / {var_exp[2]:.1%}"
+        )
+        self._log(f"  Outliers radiales CPCA (LEi < {self.tight_radius}): {len(outlier_idx)}")
+
+        # ── Paso 3: ajuste FMM + Cosinor en orden inicial ────────────────
+        self._log("=== Etapa 1.2: Deteccion de Outliers ===")
+        self._log("  Ajustando FMM y Cosinor en genes core (orden inicial) ...")
+        fmm_fits_ini, cos_fits_ini, std_res_df = self._fit_initial(
+            core_matrix, genes_found, sample_order, circular_scale,
+            pc1, pc2, pc3,
+        )
+
+        # ── Paso 4: detectar outliers (CPCA OR FMM residuos) ─────────────
+        cpca_outs, fmm_outs, all_dropped = self._detect_outliers(
+            outlier_idx, sample_order, std_res_df, genes_found,
+        )
+        self._log(f"  Criterio CPCA radial     : {len(cpca_outs)} muestra(s)")
+        self._log(f"  Criterio FMM residuos    : {len(fmm_outs)} muestra(s)")
+        self._log(f"  Total eliminados         : {len(all_dropped)}")
+
+        # ── Paso 5: limpiar + re-ejecutar CPCA si hay outliers ───────────
+        if all_dropped:
+            self._log("  Re-ejecutando CPCA sobre datos limpios ...")
+            core_clean = self._drop_samples(core_matrix, all_dropped)
+            core_norm_clean = normalise_matrix(core_clean)
+            (sample_order, circular_scale,
+             pc1, pc2, pc3, var_exp, _) = self._cpca_step(core_norm_clean)
+        else:
+            self._log("  Sin outliers — manteniendo CPCA inicial.")
+            core_norm_clean = core_matrix
+
+        # ── Paso 6: ordenar y renormalizar la matriz completa ─────────────
+        self._log("  Ordenando y renormalizando la matriz completa ...")
+        expr_norm_final = self._order_full_matrix(expr_norm, all_dropped, sample_order)
+
+        # ── Paso 7: ajuste FMM final sobre genes core ─────────────────────
+        self._log("  Ajustando FMM en genes core (orden final) ...")
+        fmm_fits_fin, fmm_peaks_fin = self._fit_final(
+            expr_norm_final, genes_found, circular_scale,
+        )
+
+        result = CPCAResult(
+            sample_order         = sample_order,
+            circular_scale       = circular_scale,
+            core_genes_found     = genes_found,
+            variance_explained   = var_exp,
+            expr_norm_final      = expr_norm_final,
+            core_norm_final      = core_norm_clean.iloc[:, sample_order],
+            fmm_fits_final       = fmm_fits_fin,
+            fmm_peak_times_final = fmm_peaks_fin,
+            samples_dropped      = list(all_dropped),
+            fmm_outliers         = fmm_outs,
+            # diagnostico
+            pc1                  = pc1,
+            pc2                  = pc2,
+            pc3                  = pc3,
+            std_residuals_fmm    = std_res_df,
+            fmm_fits_initial     = fmm_fits_ini,
+            cosinor_fits_initial = cos_fits_ini,
+        )
 
         self._log(result.summary())
         return result
@@ -230,171 +338,249 @@ class CPCA:
     # Pasos privados
     # -----------------------------------------------------------------------
 
-    def _extract_core_genes(self, expr_norm: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-        """Selecciona las filas de genes centrales de la matriz normalizada completa."""
-        genes_found  = []
-        missing      = []
-
+    def _extract_core_genes(
+        self, expr_norm: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, list[str]]:
+        """Selecciona las filas de genes core de la matriz normalizada."""
+        genes_found, missing = [], []
         for gene in self.core_genes:
-            if gene in expr_norm.index:
-                genes_found.append(gene)
-            else:
-                missing.append(gene)
+            (genes_found if gene in expr_norm.index else missing).append(gene)
 
         if missing:
             self._log(
-                f"  AVISO — {len(missing)} gen(es) central(es) no encontrado(s) en la matriz "
-                f"y se omitiran: {missing}"
+                f"  AVISO: {len(missing)} gen(es) core no encontrado(s): {missing}"
             )
-
         if len(genes_found) < 2:
             raise ValueError(
-                f"CPCA requiere al menos 2 genes centrales. "
-                f"Solo se encontraron: {genes_found}. "
-                f"Verifica que las filas de la matriz usen simbolos genicos estandar."
+                f"CPCA requiere al menos 2 genes core. "
+                f"Solo se encontraron: {genes_found}."
             )
 
         self._log(
-            f"  Genes centrales extraidos: {len(genes_found)} / "
-            f"{len(self.core_genes)}"
+            f"  Genes core extraidos: {len(genes_found)} / {len(self.core_genes)}"
         )
+        return expr_norm.loc[genes_found], genes_found
 
-        # preservar el orden de coreG, igual que match() de R
-        core_matrix = expr_norm.loc[genes_found]
-        return core_matrix, genes_found
+    def _cpca_step(
+        self, core_matrix: pd.DataFrame,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+               np.ndarray, np.ndarray]:
+        """
+        Ejecuta un paso de CPCA sobre la matriz core normalizada.
 
-    def _run_cpca(
-        self,
-        core_matrix: pd.DataFrame,
-        genes_found: list[str],
-    ) -> CPCAResult:
+        Devuelve
+        --------
+        (sample_order, circular_scale, pc1, pc2, pc3, var_exp, outlier_idx)
         """
-        Ejecuta el procedimiento CPCA completo sobre la matriz normalizada de genes.
-        1. Centrar por filas la matriz
-        2. Escalar por columnas y ejecutar SVD (PCA)
-        3. Extraer loadings de PC1, PC2, PC3 y calcular varianza explicada
-        4. Calcular norma PC1-PC2 por muestra y proyectar sobre el circulo unitario
-        5. Ordenar muestras por angulo phi
-        6. Marcar muestras outlier (cercanas al origen)
-        7. Mapear posiciones de outliers al orden clasificado
-        """
-        values   = core_matrix.values.astype(float)   # forma: (n_genes, n_muestras)
+        values = core_matrix.values.astype(float)
         n_genes, n_samples = values.shape
 
-        # ── Paso 1: centrar por filas ───────────────────────────────────────
-        # En numpy: axis=1 significa "a lo largo de columnas" -> se resta la media de cada fila.
-        row_means = values.mean(axis=1, keepdims=True)
-        centred   = values - row_means    # forma: (n_genes, n_muestras)
+        # Centrar por filas, escalar por columnas (R: prcomp scale.=TRUE center=FALSE)
+        centred  = values - values.mean(axis=1, keepdims=True)
+        col_rms  = np.sqrt(np.sum(centred**2, axis=0) / (n_genes - 1))
+        col_rms[col_rms == 0] = 1.0
+        scaled   = centred / col_rms
 
-        # ── Paso 2: escalar por columnas y SVD (PCA) ────────────────────────
-        # R: prcomp(centrado(mNorm8), scale.=TRUE, center=FALSE)
-        #
-        # En R, prcomp trata las COLUMNAS como variables y las FILAS como observaciones.
-        # Aqui la matriz es (n_genes x n_muestras), por lo que:
-        #   - columnas = muestras  -> variables en la vista de R
-        #   - filas    = genes     -> observaciones en la vista de R
-        #
-        # scale.=TRUE divide cada COLUMNA (= cada muestra) por su desv. estandar.
-        # Esto iguala la contribucion de cada muestra al PCA.
-        #
-        # sklearn PCA tambien trata las filas como observaciones. Asi que pasamos la
-        # matriz tal cual (genes x muestras) y sklearn ve genes como observaciones
-        # y muestras como features — replicando exactamente R.
-        #
-        # Tras el escalado de columnas:
-        col_rms = np.sqrt(np.sum(centred**2, axis=0) / (n_genes - 1))
-        col_rms[col_rms == 0] = 1.0          # evitar division por cero
-        scaled  = centred / col_rms          # forma: (n_genes, n_muestras)
-
-        # POR QUE NO sklearn PCA?
-        # sklearn PCA siempre resta las medias de columnas internamente antes de SVD
-        # y no tiene opcion center=False. Pasar nuestra matriz a PCA anadira un
-        # segundo centrado no deseado sobre centrado().
-        #
-        # POR QUE NO TruncatedSVD.explained_variance_ratio_?
-        # TruncatedSVD calcula su ratio como var(proyecciones) / var(X_entrada),
-        # que usa un denominador diferente a R. R usa
-        # sigma_k^2 / sum(TODOS sigma^2) — un ratio puramente de valores singulares.
-        # Los numeros difieren en ~0.1%, lo cual importa para un port fiel.
-        #
-        # SOLUCION: SVD completo de numpy para TODOS los valores singulares para
-        # obtener el denominador correcto.
-        n_components = min(3, n_genes, n_samples)
+        n_comp = min(3, n_genes, n_samples)
         _, sigma_all, Vt = np.linalg.svd(scaled, full_matrices=False)
 
-        # ── Paso 3: extraer loadings y calcular varianza explicada ──────────
-        # Vt tiene forma (n_componentes, n_muestras); cada fila es un PC.
-        # Equivalente a cp8$rotation de R (columnas PC1, PC2, PC3).
         pc1 = Vt[0]
         pc2 = Vt[1]
-        pc3 = Vt[2] if n_components >= 3 else np.zeros(n_samples)
+        pc3 = Vt[2] if n_comp >= 3 else np.zeros(n_samples)
 
         var_exp = np.zeros(3)
-        var_exp[:n_components] = (sigma_all[:n_components]**2) / np.sum(sigma_all**2)
+        var_exp[:n_comp] = (sigma_all[:n_comp]**2) / np.sum(sigma_all**2)
 
-        # ── Paso 4: norma PC1-PC2 y proyeccion sobre el circulo unitario ────
-        # Equivalente a la normalizacion z_p = a_p/r, z_q = a_q/r del paper
-        # (Scholz 2007, eq. 5). La norma mide cuanto participa cada muestra
-        # en la oscilacion dominante; muestras cercanas al origen son outliers.
-        norm12    = np.sqrt(pc1**2 + pc2**2)                        # R: d8
+        norm12    = np.sqrt(pc1**2 + pc2**2)
         safe_norm = np.where(norm12 == 0, 1.0, norm12)
+        phi       = np.arctan2(pc2 / safe_norm, pc1 / safe_norm) % (2 * np.pi)
 
-        xi  = pc1 / safe_norm
-        yi  = pc2 / safe_norm
-        phi = np.arctan2(yi, xi) % (2 * np.pi)                     # R: phi8
+        sample_order   = np.argsort(phi)
+        circular_scale = phi[sample_order]
 
-        # ── Paso 5: ordenar muestras por angulo ────────────────────────────
-        sample_order   = np.argsort(phi)                            # R: orderCPCA8
-        circular_scale = phi[sample_order]                          # R: escalaPhi8
-
-        # ── Paso 6: marcar muestras outlier ────────────────────────────────
-        # Tomar las n_outlier_candidates muestras con menor norma (mas cercanas
-        # al origen) y confirmarlas si caen dentro del radio tight o loose.
-        n_cands       = min(self.n_outlier_candidates, n_samples)
-        candidate_idx = np.argsort(norm12)[:n_cands]                # R: obs8
-
-        tight_mask = norm12[candidate_idx] <= self.tight_radius
-        used_loose = False
+        # Outliers radiales: n_outlier_candidates menores normas
+        n_cands      = min(self.n_outlier_candidates, n_samples)
+        cand_idx     = np.argsort(norm12)[:n_cands]
+        tight_mask   = norm12[cand_idx] <= self.tight_radius
 
         if tight_mask.any():
-            outlier_idx = candidate_idx[tight_mask]
+            outlier_idx = cand_idx[tight_mask]
         else:
-            loose_mask  = norm12[candidate_idx] <= self.loose_radius
-            outlier_idx = candidate_idx[loose_mask]
-            used_loose  = loose_mask.any()
+            loose_mask  = norm12[cand_idx] <= self.loose_radius
+            outlier_idx = cand_idx[loose_mask]
 
-        n_outliers = len(outlier_idx)
+        return sample_order, circular_scale, pc1, pc2, pc3, var_exp, outlier_idx
 
-        # ── Paso 7: mapear posiciones de outliers al orden clasificado ─────
-        # Para cada indice original de outlier, encontrar su posicion en sample_order.
-        if n_outliers > 0:
-            outlier_positions = np.array([
-                int(np.where(sample_order == idx)[0][0])
-                for idx in outlier_idx
-            ])
-        else:
-            outlier_positions = np.array([], dtype=int)
+    def _fit_initial(
+        self,
+        core_matrix:   pd.DataFrame,
+        genes_found:   list[str],
+        sample_order:  np.ndarray,
+        circular_scale: np.ndarray,
+        pc1: np.ndarray,
+        pc2: np.ndarray,
+        pc3: np.ndarray,
+    ) -> tuple[dict, dict, pd.DataFrame]:
+        """
+        Ajusta FMM y Cosinor en genes core + eigengenes (PC1/PC2/PC3)
+        usando el ordenamiento CPCA inicial.
 
-        return CPCAResult(
-            sample_order               = sample_order,
-            circular_scale             = circular_scale,
-            pc1                        = pc1,
-            pc2                        = pc2,
-            pc3                        = pc3,
-            variance_explained         = var_exp,
-            outlier_candidate_idx      = candidate_idx,
-            outlier_idx                = outlier_idx,
-            outlier_positions_in_order = outlier_positions,
-            n_outliers                 = n_outliers,
-            used_loose_radius          = used_loose,
-            core_genes_found           = genes_found,
-            core_matrix                = core_matrix,
+        Devuelve
+        --------
+        fmm_fits   : {nombre: FitResult}
+        cos_fits   : {nombre: FitResult}
+        std_res_df : DataFrame (senales x muestras) de residuos estandarizados
+        """
+        cm_vals = core_matrix.values
+
+        signals: dict[str, np.ndarray] = {}
+        for i, gene in enumerate(genes_found):
+            signals[gene] = cm_vals[i, sample_order]
+        signals["PC1"] = pc1[sample_order]
+        signals["PC2"] = pc2[sample_order]
+        signals["PC3"] = pc3[sample_order]
+
+        fmm_model = FMMModel(
+            length_alpha_grid = self.fmm_length_alpha_grid,
+            length_omega_grid = self.fmm_length_omega_grid,
+            num_reps          = self.fmm_num_reps,
         )
+        cos_model = CosinorModel()
+
+        fmm_fits:      dict[str, FitResult] = {}
+        cos_fits:      dict[str, FitResult] = {}
+        std_res_rows:  list[np.ndarray]     = []
+        signal_names:  list[str]            = []
+
+        n_total = len(signals)
+        for idx, (name, data) in enumerate(signals.items(), 1):
+            self._log(f"    [{idx}/{n_total}] {name}", end="\r")
+            fr = fmm_model.fit(data, circular_scale)
+            cr = cos_model.fit(data, circular_scale)
+            fmm_fits[name] = fr
+            cos_fits[name] = cr
+            std_res_rows.append(fr.residuals_std)
+            signal_names.append(name)
+
+        self._log(f"    Ajuste completado: {n_total} senales.           ")
+
+        std_res_df = pd.DataFrame(
+            np.vstack(std_res_rows),
+            index   = signal_names,
+            columns = np.arange(len(circular_scale)),
+        )
+        return fmm_fits, cos_fits, std_res_df
+
+    def _detect_outliers(
+        self,
+        outlier_idx:   np.ndarray,
+        sample_order:  np.ndarray,
+        std_res_df:    pd.DataFrame,
+        genes_found:   list[str],
+    ) -> tuple[list[int], list[int], list[int]]:
+        """
+        Aplica criterios de outlier en logica OR (Sec. 3.3 suplementario):
+
+          1. CPCA radial (LEi < tight_radius): ya en outlier_idx.
+          2. FMM residuos (|ri| > multi_threshold): para cualquier gen core.
+
+        Devuelve
+        --------
+        cpca_outs  : eliminados por criterio radial
+        fmm_outs   : eliminados solo por criterio FMM
+        all_dropped: union ordenada (con tope max_outlier_fraction)
+        """
+        n_samples = len(sample_order)
+        cap       = int(np.ceil(self.max_outlier_fraction * n_samples))
+
+        # Criterio 1: CPCA radial
+        cpca_set = set(outlier_idx.tolist())
+
+        # Criterio 2: residuos FMM sobre genes core (no eigengenes)
+        core_res = std_res_df.loc[genes_found].values  # (n_genes, n_samples)
+        fmm_cands: list[int] = []
+        for i in range(len(genes_found)):
+            for pos in np.where(np.abs(core_res[i]) > self.multi_threshold)[0]:
+                fmm_cands.append(int(sample_order[pos]))
+
+        # Union OR con tope
+        seen:       set[int]  = set()
+        all_dropped: list[int] = []
+        for idx in list(outlier_idx) + fmm_cands:
+            if idx not in seen:
+                seen.add(idx)
+                all_dropped.append(idx)
+            if len(all_dropped) >= cap:
+                break
+
+        cpca_outs = [i for i in all_dropped if i in cpca_set]
+        fmm_outs  = [i for i in all_dropped if i not in cpca_set]
+
+        return cpca_outs, fmm_outs, all_dropped
+
+    def _drop_samples(
+        self, matrix: pd.DataFrame, dropped: list[int],
+    ) -> pd.DataFrame:
+        """Elimina columnas por indice original de muestra."""
+        all_cols  = np.arange(matrix.shape[1])
+        keep_mask = ~np.isin(all_cols, dropped)
+        return matrix.iloc[:, keep_mask]
+
+    def _order_full_matrix(
+        self,
+        expr_norm:    pd.DataFrame,
+        dropped:      list[int],
+        sample_order: np.ndarray,
+    ) -> pd.DataFrame:
+        """
+        Elimina outliers de la matriz completa, reordena por fase circular
+        final y renormaliza gen a gen.
+        """
+        mat_clean   = self._drop_samples(expr_norm, dropped)
+        mat_ordered = mat_clean.iloc[:, sample_order]
+        return normalise_matrix(mat_ordered)
+
+    def _fit_final(
+        self,
+        expr_norm_final: pd.DataFrame,
+        genes_found:     list[str],
+        circular_scale:  np.ndarray,
+    ) -> tuple[dict, dict]:
+        """
+        Ajusta FMM en cada gen core con el ordenamiento final.
+
+        Devuelve
+        --------
+        fmm_fits_final : {gen: FitResult}
+        peak_times     : {gen: float}
+        """
+        fmm_model = FMMModel(
+            length_alpha_grid = self.fmm_length_alpha_grid,
+            length_omega_grid = self.fmm_length_omega_grid,
+            num_reps          = self.fmm_num_reps,
+        )
+
+        fmm_fits: dict[str, FitResult] = {}
+        peaks:    dict[str, float]     = {}
+
+        n_total = len(genes_found)
+        for idx, gene in enumerate(genes_found, 1):
+            self._log(f"    [{idx}/{n_total}] {gene}", end="\r")
+            if gene not in expr_norm_final.index:
+                self._log(f"    AVISO: {gene} no en la matriz final, omitido.")
+                continue
+            data = expr_norm_final.loc[gene].values
+            fr   = fmm_model.fit(data, circular_scale)
+            fmm_fits[gene] = fr
+            peaks[gene]    = fr.peak_time
+
+        self._log(f"    Ajuste final completado: {len(fmm_fits)} genes core.  ")
+        return fmm_fits, peaks
 
     # -----------------------------------------------------------------------
     # Utilidades
     # -----------------------------------------------------------------------
 
-    def _log(self, message: str) -> None:
+    def _log(self, message: str, end: str = "\n") -> None:
         if self.verbose:
-            print(message)
+            print(message, end=end, flush=True)

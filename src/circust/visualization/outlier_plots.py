@@ -35,7 +35,6 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
 from circust.cpca import CPCAResult
-from circust.outlier import OutlierRefinementResult
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +51,7 @@ _THRESHOLD_COLOURS = {3: "#984EA3", 4: "#E41A1C"}  # purple / red
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_core_gene_fits(
-    result: OutlierRefinementResult,
-    cpca_initial: CPCAResult | None = None,
+    result: CPCAResult,
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
     show_eigengenes: bool = True,
@@ -67,12 +65,10 @@ def plot_core_gene_fits(
 
     Parámetros
     ----------
-    result : OutlierRefinementResult
-        Salida de ``OutlierRefiner.run()``.
-    cpca_initial : CPCAResult, opcional
-        El resultado CPCA inicial (antes de eliminar outliers). Si se proporciona,
-        los ajustes iniciales se grafican contra el ordenamiento inicial.
-        Si es None, se usa el resultado CPCA final (los ajustes deben coincidir en tamaño).
+    result : CPCAResult
+        Salida de ``CPCA.run()``. Los ajustes iniciales y residuos se
+        almacenan en los campos de diagnostico ``fmm_fits_initial``,
+        ``cosinor_fits_initial`` y ``std_residuals_fmm``.
     title : str
         Etiqueta del suptítulo.
     figsize : tuple, opcional
@@ -84,11 +80,8 @@ def plot_core_gene_fits(
     --------
     matplotlib.figure.Figure
     """
-    # Usar el CPCA inicial si se proporciona (los ajustes iniciales tienen longitud pre-outlier)
-    cpca = cpca_initial if cpca_initial is not None else result.cpca_final
-    time_points = cpca.circular_scale
-    order = cpca.sample_order
-    genes = list(cpca.core_genes_found)
+    time_points = result.circular_scale
+    genes       = list(result.core_genes_found)
 
     signals = genes.copy()
     if show_eigengenes:
@@ -104,21 +97,20 @@ def plot_core_gene_fits(
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     axes_flat = axes.flatten() if n_panels > 1 else [axes]
 
-    # Matriz core ordenada por fase CPCA
-    cm = cpca.core_matrix
-    cm_vals = cm.values if hasattr(cm, "values") else cm
+    # Datos observados: matriz core final ya ordenada por fase CPCA
+    cm_vals = result.core_norm_final.values
 
     for i, name in enumerate(signals):
         ax = axes_flat[i]
 
-        # Obtener datos observados en orden CPCA
+        # Obtener datos observados
         if name in genes:
             gene_idx = genes.index(name)
-            y_obs = cm_vals[gene_idx, order]
+            y_obs = cm_vals[gene_idx]
         else:
-            # Eigengene
-            eigenvec = {"PC1": cpca.pc1, "PC2": cpca.pc2, "PC3": cpca.pc3}
-            y_obs = eigenvec[name][order]
+            # Eigengene (loadings finales, ya ordenados)
+            eigenvec = {"PC1": result.pc1, "PC2": result.pc2, "PC3": result.pc3}
+            y_obs = eigenvec[name]
 
         # Graficar observado
         ax.plot(time_points, y_obs, "o",
@@ -187,7 +179,7 @@ def plot_core_gene_fits(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_residual_strips(
-    result: OutlierRefinementResult,
+    result: CPCAResult,
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
@@ -204,7 +196,7 @@ def plot_residual_strips(
 
     Parámetros
     ----------
-    result : OutlierRefinementResult
+    result : CPCAResult
     title : str
     figsize : tuple, opcional
 
@@ -283,7 +275,7 @@ def plot_residual_strips(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_residual_heatmap(
-    result: OutlierRefinementResult,
+    result: CPCAResult,
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
@@ -300,7 +292,7 @@ def plot_residual_heatmap(
 
     Parámetros
     ----------
-    result : OutlierRefinementResult
+    result : CPCAResult
     title : str
     figsize : tuple, opcional
 
