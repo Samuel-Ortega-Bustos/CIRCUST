@@ -48,8 +48,13 @@ except ImportError:
 
 
 @njit(cache=True, fastmath=True)
-def _pava_inc_numba(y: np.ndarray) -> np.ndarray:
-    """Pool-Adjacent-Violators creciente (pesos uniformes) compilado JIT."""
+def _pava_inc_numba(y: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """
+    Pool-Adjacent-Violators creciente compilado JIT.
+
+    Acepta pesos arbitrarios *w*. Para pesos uniformes el llamador pasa
+    ``np.ones(n)``. Minimiza  Σ wᵢ (yᵢ − ŷᵢ)²  s.a.  ŷ₁ ≤ … ≤ ŷₙ.
+    """
     n = y.shape[0]
     if n <= 1:
         out = np.empty(n, dtype=np.float64)
@@ -63,8 +68,8 @@ def _pava_inc_numba(y: np.ndarray) -> np.ndarray:
     nb = 0
 
     for i in range(n):
-        block_sum[nb] = y[i]
-        block_w[nb]   = 1.0
+        block_sum[nb] = y[i] * w[i]
+        block_w[nb]   = w[i]
         block_end[nb] = i
         nb += 1
         while nb >= 2:
@@ -329,8 +334,7 @@ def pava_increasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
     Dados observaciones *y* con pesos positivos opcionales *w*, devuelve el
     vector ŷ que minimiza  Σ wᵢ (yᵢ − ŷᵢ)²  sujeto a  ŷ₁ ≤ ŷ₂ ≤ … ≤ ŷₙ.
 
-    Es un port directo de la funcion C ``pavaCAdri`` llamada por el
-    wrapper R ``pavaC()`` en ``NucleoComun.R`` (lineas 3–25).
+    Es un port directo de la funcion C
 
     Complejidad: O(n) tiempo, O(n) espacio.
 
@@ -350,27 +354,25 @@ def pava_increasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
     if n <= 1:
         return y.copy()
 
-    if w is None:
-        if _HAS_NUMBA:
-            return _pava_inc_numba(y)
-        w = np.ones(n, dtype=np.float64)
-    else:
-        w = np.asarray(w, dtype=np.float64)
+    w_arr = (np.ones(n, dtype=np.float64) if w is None
+             else np.ascontiguousarray(np.asarray(w, dtype=np.float64)))
 
-    # Algoritmo de fusion de bloques basado en pila.
-    # Cada bloque almacena (suma ponderada acumulada, peso acumulado, indice derecho).
+    if _HAS_NUMBA:
+        return _pava_inc_numba(y, w_arr)
+
+    # Fallback Python puro — algoritmo de fusion de bloques.
+    # Cada bloque: (suma ponderada acumulada, peso acumulado, indice derecho).
     block_sum = np.empty(n, dtype=np.float64)
     block_w   = np.empty(n, dtype=np.float64)
     block_end = np.empty(n, dtype=np.intp)
-    nb = 0                                          # number of active blocks
+    nb = 0
 
     for i in range(n):
-        block_sum[nb] = y[i] * w[i]
-        block_w[nb]   = w[i]
+        block_sum[nb] = y[i] * w_arr[i]
+        block_w[nb]   = w_arr[i]
         block_end[nb] = i
         nb += 1
 
-        # Fusionar mientras se viole la restriccion de monotonia.
         while nb >= 2:
             avg_prev = block_sum[nb - 2] / block_w[nb - 2]
             avg_curr = block_sum[nb - 1] / block_w[nb - 1]
@@ -381,7 +383,6 @@ def pava_increasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
             block_end[nb - 2]  = block_end[nb - 1]
             nb -= 1
 
-    # Escribir las medias de bloque de vuelta en el array de resultado.
     result = np.empty(n, dtype=np.float64)
     start = 0
     for b in range(nb):
@@ -397,7 +398,6 @@ def pava_decreasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
     Regresion isotonica decreciente.
 
     Equivalente a negar *y*, ejecutar ``pava_increasing``, y negar de vuelta.
-    Equivalente en R: ``pavaCAdriDecreasing``.
     """
     return -pava_increasing(-np.asarray(y, dtype=np.float64), w)
 
@@ -411,11 +411,9 @@ def find_local_extrema(v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Encuentra minimos locales (valles) y maximos locales (picos) usando
     vecinos circulares.
 
-    Un punto *i* es un maximo local si  v[i−1] ≤ v[i]  Y  v[i] ≥ v[i+1],
+    Un punto i es un maximo local si  v[i−1] ≤ v[i]  Y  v[i] ≥ v[i+1],
     con indices envolventes circulares. Los minimos locales se definen
     simetricamente.
-
-    Equivalente en R: ``extremosLocales(v)`` en ``NucleoComun.R`` (lineas 36–60).
 
     Nota sobre el codigo R: los comentarios etiquetan los maximos como
     "minimos locales" y viceversa (un error de copiar-pegar en los
@@ -720,7 +718,7 @@ def _assemble(
 @dataclass
 class NonParametricResult:
     """
-    Salida de :class:`NonParametricScorer`.
+    Salida de :class:NonParametricScorer.
 
     Atributos
     ---------
@@ -845,7 +843,6 @@ class NonParametricScorer:
         expr_ordered : pd.DataFrame, forma (n_genes, n_muestras)
             Matriz de expresion normalizada completa ya ordenada por el
             tiempo circular preliminar.
-            Equivalente en R: ``preOrdRefG2[[3]]``  (= ``matNewNew``).
 
         Devuelve
         --------

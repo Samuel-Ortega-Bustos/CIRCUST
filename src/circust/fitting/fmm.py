@@ -55,10 +55,9 @@ from scipy.optimize import minimize
 
 from circust.fitting.rhythm_model import FitResult, RhythmModel
 
-# ── Aceleracion opcional con Numba ─────────────────────────────────────────
+# ── Aceleracion opcional con Numba (CPU JIT) ───────────────────────────────
 # Si Numba esta disponible, compilamos la evaluacion del modelo y la funcion
-# objetivo que Nelder-Mead llama miles de veces por gen. El grid search ya
-# esta vectorizado en NumPy y no se beneficia de JIT.
+# objetivo que Nelder-Mead llama miles de veces por gen.
 try:
     from numba import njit
     _HAS_NUMBA = True
@@ -69,6 +68,21 @@ except ImportError:
         if len(args) == 1 and callable(args[0]):
             return args[0]
         return deco
+
+# ── Aceleracion opcional con Numba CUDA (GPU) ──────────────────────────────
+# Opcion A: el Paso 1 (busqueda en rejilla) se ejecuta en GPU si esta
+# disponible.  Para datasets grandes (muchas muestras o rejillas densas) el
+# grid search es el cuello de botella principal — se presta bien a GPU porque
+# cada punto (alpha, omega) es independiente.
+#
+# Opcion B (trabajo futuro): paralelizar el ajuste de N genes en GPU
+# requeriria reimplementar Nelder-Mead en CUDA, lo que esta fuera del alcance
+# actual del TFG.  Ver comentario en ``_step1_grid_cuda`` para detalles.
+try:
+    from numba import cuda as _numba_cuda
+    _HAS_CUDA = _numba_cuda.is_available()
+except (ImportError, Exception):
+    _HAS_CUDA = False
 
 
 @njit(cache=True, fastmath=True)
@@ -253,6 +267,140 @@ def _step1_grid(
     return np.column_stack([M_est, A_est, alpha_flat, beta_est, omega_flat, rss])
 
 
+def _step1_grid_cuda(
+    alpha_grid: np.ndarray,
+    omega_grid: np.ndarray,
+    data: np.ndarray,
+    t: np.ndarray,
+) -> np.ndarray:
+    """
+    Paso 1 vectorizado con Numba CUDA — Opcion A de aceleracion GPU.
+
+    Cada hilo GPU procesa un punto (alpha, omega) de la rejilla de forma
+    independiente, calculando los coeficientes OLS y el RSS correspondiente.
+
+    La GPU es especialmente util cuando ``len(alpha_grid) * len(omega_grid)``
+    es grande (>= varios miles de combinaciones) o cuando ``len(t)`` es
+    grande (>= cientos de muestras).
+
+    Requisito: ``numba.cuda.is_available() == True``.
+
+    Opcion B — trabajo futuro
+    -------------------------
+    Paralelizar el ajuste de N genes simultaneamente en GPU requeriria
+    reimplementar el optimizador Nelder-Mead como kernel CUDA, ya que
+    ``scipy.optimize.minimize`` no puede ejecutarse en GPU. Las referencias
+    de implementacion son:
+      - Luersen & Le Riche (2004), «Globalized Nelder-Mead method for
+        engineering optimization», Computers & Structures 82(23-26), 2253-2260.
+      - Implementaciones existentes de CUDA NM: Vehtari et al. / PyMC3 GPU.
+    Esta opcion queda documentada como trabajo futuro una vez el pipeline
+    principal este validado.
+
+    Devuelve
+    --------
+    array (A*W, 6) — mismo layout que ``_step1_grid`` (CPU).
+    """
+    from numba import cuda as _cuda
+    import math
+
+    An, Wn, N = len(alpha_grid), len(omega_grid), len(t)
+    AW = An * Wn
+
+    alpha_flat = np.repeat(alpha_grid, Wn).astype(np.float64)
+    omega_flat = np.tile(omega_grid, An).astype(np.float64)
+    data_d     = _cuda.to_device(data.astype(np.float64))
+    t_d        = _cuda.to_device(t.astype(np.float64))
+    alpha_d    = _cuda.to_device(alpha_flat)
+    omega_d    = _cuda.to_device(omega_flat)
+    out_d      = _cuda.device_array((AW, 6), dtype=np.float64)
+
+    @_cuda.jit
+    def _grid_kernel(alpha_arr, omega_arr, data_arr, t_arr, out, n_samples):
+        idx = _cuda.grid(1)
+        if idx >= alpha_arr.shape[0]:
+            return
+        alpha = alpha_arr[idx]
+        omega = omega_arr[idx]
+        N     = n_samples
+
+        # Acumula sumas para OLS centrado
+        sum_xx = 0.0; sum_zz = 0.0; sum_xz = 0.0
+        sum_xy = 0.0; sum_zy = 0.0
+        sum_x  = 0.0; sum_z  = 0.0
+        data_mean = 0.0
+        for i in range(N):
+            data_mean += data_arr[i]
+        data_mean /= N
+
+        for i in range(N):
+            mob    = 2.0 * math.atan(omega * math.tan((t_arr[i] - alpha) / 2.0))
+            t_star = alpha + mob
+            x_i    = math.cos(t_star)
+            z_i    = math.sin(t_star)
+            sum_x  += x_i
+            sum_z  += z_i
+
+        x_mean = sum_x / N
+        z_mean = sum_z / N
+
+        for i in range(N):
+            mob    = 2.0 * math.atan(omega * math.tan((t_arr[i] - alpha) / 2.0))
+            t_star = alpha + mob
+            x_c    = math.cos(t_star) - x_mean
+            z_c    = math.sin(t_star) - z_mean
+            y_c    = data_arr[i] - data_mean
+            sum_xx += x_c * x_c
+            sum_zz += z_c * z_c
+            sum_xz += x_c * z_c
+            sum_xy += x_c * y_c
+            sum_zy += z_c * y_c
+
+        det = sum_xx * sum_zz - sum_xz * sum_xz
+        if abs(det) < 1e-12:
+            det = 1e-12
+
+        b     = (sum_zz * sum_xy - sum_xz * sum_zy) / det
+        g     = (sum_xx * sum_zy - sum_xz * sum_xy) / det
+
+        # Calcular medias de x, z para recuperar M
+        sum_x2 = 0.0; sum_z2 = 0.0
+        for i in range(N):
+            mob    = 2.0 * math.atan(omega * math.tan((t_arr[i] - alpha) / 2.0))
+            t_star = alpha + mob
+            sum_x2 += math.cos(t_star)
+            sum_z2 += math.sin(t_star)
+        M_est = data_mean - b * (sum_x2 / N) - g * (sum_z2 / N)
+        A_est = math.sqrt(b * b + g * g)
+        phi_est = math.atan2(-g, b)
+        beta_est = math.fmod(phi_est + alpha, 2.0 * math.pi)
+        if beta_est < 0.0:
+            beta_est += 2.0 * math.pi
+
+        # RSS
+        rss = 0.0
+        for i in range(N):
+            mob    = 2.0 * math.atan(omega * math.tan((t_arr[i] - alpha) / 2.0))
+            fitted = M_est + A_est * math.cos(beta_est + mob)
+            d      = fitted - data_arr[i]
+            rss   += d * d
+        rss /= N
+
+        out[idx, 0] = M_est
+        out[idx, 1] = A_est
+        out[idx, 2] = alpha
+        out[idx, 3] = beta_est
+        out[idx, 4] = omega
+        out[idx, 5] = rss
+
+    threads_per_block = 128
+    blocks = (AW + threads_per_block - 1) // threads_per_block
+    _grid_kernel[blocks, threads_per_block](
+        alpha_d, omega_d, data_d, t_d, out_d, N
+    )
+    return out_d.copy_to_host()
+
+
 def _best_step1(
     data: np.ndarray,
     grid_results: np.ndarray,
@@ -426,10 +574,16 @@ class FMMModel(RhythmModel):
 
         for rep in range(self.num_reps):
 
-            # ── Paso 1: busqueda en rejilla vectorizada ─────────────────
-            # Evalua todas las combinaciones (alpha, omega) en una sola
-            # pasada NumPy (~3x mas rapido que el bucle for equivalente).
-            grid_results = _step1_grid(alpha_grid, omega_grid, data, time_points)
+            # ── Paso 1: busqueda en rejilla ─────────────────────────────
+            # Si hay GPU disponible (Opcion A), la rejilla se evalua en CUDA
+            # con un hilo por combinacion (alpha, omega).  Si no, se usa la
+            # version CPU vectorizada con NumPy (~3x vs bucle for puro).
+            if _HAS_CUDA:
+                grid_results = _step1_grid_cuda(
+                    alpha_grid, omega_grid, data, time_points
+                )
+            else:
+                grid_results = _step1_grid(alpha_grid, omega_grid, data, time_points)
 
             prev_best = best_par
             best_par  = _best_step1(data, grid_results)

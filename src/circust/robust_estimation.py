@@ -36,8 +36,10 @@ Posicion en el pipeline
 """
 from __future__ import annotations
 
+import os
 import numpy as np
 import pandas as pd
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from math import pi
 from types import SimpleNamespace
@@ -120,6 +122,110 @@ class RobustEstimationResult:
 
 
 # ---------------------------------------------------------------------------
+# Funcion auxiliar de nivel modulo — necesaria para que ProcessPoolExecutor
+# pueda serializarla (pickle) en subprocesos.
+# ---------------------------------------------------------------------------
+
+def _fit_gene(args):
+    """
+    Ajusta FMM + Cosinor + NP para un unico gen.
+
+    Parametros
+    ----------
+    args : tuple
+        (gene_name, vvv, esc_k, fmm_kwargs, arntl_peak_raw,
+         orientation_changed, order_rot, n_samp)
+
+    Devuelve
+    --------
+    (i, gene, stat_fmm, stat_cos, stat_np, fitted_fmm_reord,
+     fitted_cos_reord, np_fit)
+    Donde ``fitted_*_reord`` ya esta reordenado por ``order_rot``
+    (y opcionalmente invertido si ``orientation_changed``).
+    """
+    (i, gene, vvv, esc_k, fmm_kwargs, arntl_peak_raw,
+     orientation_changed, order_rot, n_samp) = args
+
+    fmm_loc  = FMMModel(**fmm_kwargs)
+    cosm_loc = CosinorModel()
+
+    two_pi = 2.0 * pi
+
+    # ---- FMM ----
+    fr  = fmm_loc.fit(vvv, esc_k)
+    M, A      = fr.params["M"],     fr.params["A"]
+    alpha     = fr.params["alpha"]
+    beta      = fr.params["beta"]
+    omega     = fr.params["omega"]
+    al = (alpha - arntl_peak_raw + pi) % two_pi
+    if not orientation_changed:
+        pars_fmm = (M, A, al, beta, omega)
+    else:
+        pars_fmm = (
+            M, A,
+            (two_pi - al)   % two_pi,
+            (two_pi - beta) % two_pi,
+            omega,
+        )
+    pkU = FMMModel.peak_time(pars_fmm[2], pars_fmm[3], pars_fmm[4])
+    pkL = (pkU + pi) % two_pi
+    peaks_fmm = (pkU, pkL, pkU / two_pi * 100, pkL / two_pi * 100)
+    resid     = vvv - fr.fitted
+    sFMM   = float(np.sum(resid**2) / max(n_samp - 5, 1))
+    mseFMM = float(np.sum(resid**2) / n_samp)
+    r2FMM  = float(fr.r2)
+    if not orientation_changed:
+        fitted_fmm_reord = fr.fitted[order_rot]
+    else:
+        fitted_fmm_reord = fr.fitted[order_rot][::-1]
+    stat_fmm = list(pars_fmm) + list(peaks_fmm) + [sFMM, mseFMM, r2FMM]
+
+    # ---- Cosinor ----
+    cr = cosm_loc.fit(vvv, esc_k)
+    Mc, Ac, phiC = cr.params["M"], cr.params["A"], cr.params["phi"]
+    phiC_rot = (phiC - arntl_peak_raw + pi) % two_pi
+    if not orientation_changed:
+        pars_cos = (Mc, Ac, phiC_rot)
+        pk1 = phiC_rot % two_pi
+        pk2 = (phiC_rot + pi) % two_pi
+    else:
+        pars_cos = (Mc, Ac, (two_pi - phiC_rot) % two_pi)
+        pk1 = phiC % two_pi
+        pk2 = (phiC + pi) % two_pi
+    peaks_cos = (pk1, pk2, pk1 / two_pi * 100, pk2 / two_pi * 100)
+    resid_c = vvv - cr.fitted
+    sCos   = float(np.sum(resid_c**2) / max(n_samp - 3, 1))
+    mseCos = float(np.sum(resid_c**2) / n_samp)
+    r2Cos  = float(cr.r2)
+    if not orientation_changed:
+        fitted_cos_reord = cr.fitted[order_rot]
+    else:
+        fitted_cos_reord = cr.fitted[order_rot][::-1]
+    stat_cos = list(pars_cos) + list(peaks_cos) + [sCos, mseCos, r2Cos]
+
+    # ---- NP ----
+    vvv_anch = vvv[order_rot]
+    if orientation_changed:
+        vvv_anch = vvv_anch[::-1]
+    npres = circular_unimodal_fit(vvv_anch)
+    if npres is not None:
+        np_fit = npres[0]
+        mse_np = float(npres[1])
+    else:
+        np_fit = np.full(n_samp, vvv_anch.mean())
+        mse_np = float(np.mean((vvv_anch - vvv_anch.mean())**2))
+    resid_n = vvv_anch - np_fit
+    sNp   = float(np.sum(resid_n**2) / max(n_samp - 3, 1))
+    mseNp = float(np.sum(resid_n**2) / n_samp)
+    var_y = float(np.var(vvv_anch))
+    r2Np  = float(1.0 - mse_np / var_y) if var_y > 0 else 0.0
+    stat_np = [sNp, mseNp, r2Np]
+
+    return (i, gene, stat_fmm, stat_cos, stat_np,
+            fitted_fmm_reord, fitted_cos_reord, np_fit)
+
+
+# ---------------------------------------------------------------------------
 # RobustEstimator
 # ---------------------------------------------------------------------------
 
@@ -136,6 +242,11 @@ class RobustEstimator:
     fmm_length_alpha_grid, fmm_length_omega_grid, fmm_num_reps : int
         Hiperparametros del modelo FMM en cada re-ajuste.
 
+    n_jobs : int
+        Numero de procesos CPU para el ajuste paralelo de genes dentro de
+        cada repeticion.  ``-1`` usa todos los nucleos disponibles.
+        ``1`` deshabilita el paralelismo (util para depuracion).
+
     verbose : bool
         Imprimir progreso.
     """
@@ -148,6 +259,7 @@ class RobustEstimator:
         fmm_length_alpha_grid: int = 48,
         fmm_length_omega_grid: int = 24,
         fmm_num_reps:         int  = 3,
+        n_jobs:               int  = 1,
         verbose:              bool = True,
     ) -> None:
         self.anchor_gene      = anchor_gene
@@ -158,6 +270,7 @@ class RobustEstimator:
             length_omega_grid=fmm_length_omega_grid,
             num_reps=fmm_num_reps,
         )
+        self.n_jobs  = n_jobs
         self.verbose = verbose
 
     # ------------------------------------------------------------------
@@ -204,7 +317,6 @@ class RobustEstimator:
         n_samp = top_matrix.shape[1]
 
         fmm   = FMMModel(**self._fmm_kwargs)
-        cosm  = CosinorModel()
         prelim = CircularSynchronizer(
             anchor_gene      = self.anchor_gene,
             direction_gene   = self.direction_gene,
@@ -279,106 +391,56 @@ class RobustEstimator:
             sample_orders[k] = global_order
             circ_scales[k]   = esc_fin
 
-            # Pico ARNTL en el marco "raw" (FMM sobre esc_k)
-            arntl_idx_core = (
-                core_present.index(self.arntl_gene)
-                if self.arntl_gene in core_present else None
-            )
+            # Pico anchor_gene en el marco "raw" (FMM sobre esc_k)
             arntl_peak_raw = (
-                fmm_fits[self.arntl_gene].params["alpha"]
-                if self.arntl_gene in fmm_fits else 0.0
+                fmm_fits[self.anchor_gene].params["alpha"]
+                if self.anchor_gene in fmm_fits else 0.0
             )
-            # Reusamos solo arntl_peak para reparametrizar genes no-core.
-            # Para alinear con R: usar el FMM-peak (compUU) de ARNTL, no alpha.
-            if self.arntl_gene in fmm_fits:
-                arntl_peak_raw = fmm_fits[self.arntl_gene].peak_time
+            # Para alinear con R: usar el FMM-peak (compUU) del anchor, no alpha.
+            if self.anchor_gene in fmm_fits:
+                arntl_peak_raw = fmm_fits[self.anchor_gene].peak_time
 
             # ── 4. Re-ajustar FMM/Cosinor/NP a cada fila del TOP ─────────
             fmm_mat = np.zeros((n_top, n_samp))
             cos_mat = np.zeros((n_top, n_samp))
             np_mat  = np.zeros((n_top, n_samp))
 
-            # esc rotado a marco ARNTL en el espacio "no sincronizado"
+            # esc rotado a marco anchor en el espacio "no sincronizado"
             esc_rot = (esc_k - arntl_peak_raw + pi) % (2.0 * pi)
             order_rot = np.argsort(esc_rot)
 
-            for i, gene in enumerate(names_top):
-                vvv = top_k.loc[gene].values.astype(np.float64)
+            # Construimos los argumentos para cada gen
+            gene_args = [
+                (
+                    i, gene,
+                    top_k.loc[gene].values.astype(np.float64),
+                    esc_k,
+                    self._fmm_kwargs,
+                    arntl_peak_raw,
+                    orientation_changed,
+                    order_rot,
+                    n_samp,
+                )
+                for i, gene in enumerate(names_top)
+            ]
 
-                # ---- FMM (sobre esc_k crudo) ----
-                fr = fmm.fit(vvv, esc_k)
-                M, A = fr.params["M"], fr.params["A"]
-                alpha = fr.params["alpha"]
-                beta  = fr.params["beta"]
-                omega = fr.params["omega"]
-                al = (alpha - arntl_peak_raw + pi) % (2.0 * pi)
-                if not orientation_changed:
-                    pars_fmm = (M, A, al, beta, omega)
-                else:
-                    pars_fmm = (
-                        M, A,
-                        (2.0 * pi - al)   % (2.0 * pi),
-                        (2.0 * pi - beta) % (2.0 * pi),
-                        omega,
-                    )
-                pkU = FMMModel.peak_time(pars_fmm[2], pars_fmm[3], pars_fmm[4])
-                pkL = (pkU + pi) % (2.0 * pi)
-                peaks_fmm = (pkU, pkL, pkU/(2*pi)*100, pkL/(2*pi)*100)
-                fitted_fmm = fr.fitted
-                resid = vvv - fitted_fmm
-                sFMM   = float(np.sum(resid**2) / max(n_samp - 5, 1))
-                mseFMM = float(np.sum(resid**2) / n_samp)
-                r2FMM  = float(fr.r2)
-                if not orientation_changed:
-                    fmm_mat[i] = fitted_fmm[order_rot]
-                else:
-                    fmm_mat[i] = fitted_fmm[order_rot][::-1]
+            # Paralelismo CPU: cada gen se ajusta en un subproceso independiente.
+            # n_jobs=1 desactiva el pool (util para depuracion o datasets pequenos).
+            n_workers = (
+                os.cpu_count() if self.n_jobs == -1 else self.n_jobs
+            )
+            if n_workers == 1:
+                gene_results = [_fit_gene(a) for a in gene_args]
+            else:
+                with ProcessPoolExecutor(max_workers=n_workers) as pool:
+                    gene_results = list(pool.map(_fit_gene, gene_args))
 
-                stat_fmm = list(pars_fmm) + list(peaks_fmm) + [sFMM, mseFMM, r2FMM]
-
-                # ---- Cosinor ----
-                cr = cosm.fit(vvv, esc_k)
-                Mc, Ac, phiC = cr.params["M"], cr.params["A"], cr.params["phi"]
-                phiC_rot = (phiC - arntl_peak_raw + pi) % (2.0 * pi)
-                if not orientation_changed:
-                    pars_cos = (Mc, Ac, phiC_rot)
-                    pk1 = phiC_rot % (2*pi)
-                    pk2 = (phiC_rot + pi) % (2*pi)
-                else:
-                    pars_cos = (Mc, Ac, (2.0*pi - phiC_rot) % (2.0*pi))
-                    pk1 = phiC % (2*pi)
-                    pk2 = (phiC + pi) % (2*pi)
-                peaks_cos = (pk1, pk2, pk1/(2*pi)*100, pk2/(2*pi)*100)
-                fitted_cos = cr.fitted
-                resid_c = vvv - fitted_cos
-                sCos   = float(np.sum(resid_c**2) / max(n_samp - 3, 1))
-                mseCos = float(np.sum(resid_c**2) / n_samp)
-                r2Cos  = float(cr.r2)
-                if not orientation_changed:
-                    cos_mat[i] = fitted_cos[order_rot]
-                else:
-                    cos_mat[i] = fitted_cos[order_rot][::-1]
-                stat_cos = list(pars_cos) + list(peaks_cos) + [sCos, mseCos, r2Cos]
-
-                # ---- NP (sobre la senal en el orden anclado) ----
-                vvv_anch = vvv[order_rot]
-                if orientation_changed:
-                    vvv_anch = vvv_anch[::-1]
-                npres = circular_unimodal_fit(vvv_anch)
-                if npres is not None:
-                    np_fit = npres[0]
-                    mse_np = float(npres[1])
-                else:
-                    np_fit = np.full(n_samp, vvv_anch.mean())
-                    mse_np = float(np.mean((vvv_anch - vvv_anch.mean())**2))
-                np_mat[i] = np_fit
-                resid_n = vvv_anch - np_fit
-                sNp   = float(np.sum(resid_n**2) / max(n_samp - 3, 1))
-                mseNp = float(np.sum(resid_n**2) / n_samp)
-                var_y = float(np.var(vvv_anch))
-                r2Np  = float(1.0 - mse_np / var_y) if var_y > 0 else 0.0
-                stat_np = [sNp, mseNp, r2Np]
-
+            for res in gene_results:
+                (i, gene, stat_fmm, stat_cos, stat_np,
+                 fitted_fmm_reord, fitted_cos_reord, np_fit) = res
+                fmm_mat[i] = fitted_fmm_reord
+                cos_mat[i] = fitted_cos_reord
+                np_mat[i]  = np_fit
                 stats_table[k * n_top + i] = stat_fmm + stat_cos + stat_np
 
             per_rep_fmm.append(pd.DataFrame(fmm_mat, index=names_top))
