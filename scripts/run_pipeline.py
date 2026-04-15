@@ -110,7 +110,7 @@ DEFAULT_CONFIG = {
     "tight_radius":           0.10,     # umbral radial primario
     "loose_radius":           0.15,     # umbral radial alternativo
     # Detección de outliers
-    "outlier_multi_threshold": 3.0,     # |res. estand.| multivariante (Sec. 3.3 suplementario)
+    "outlier_fmm_threshold":   3.0,     # |res. estand.| FMM (Sec. 3.3 suplementario)
     "max_outlier_fraction":    0.05,    # límite máximo de muestras eliminables
     # Ajuste FMM
     "fmm_alpha_grid":         48,       # resolución de la rejilla alpha
@@ -294,7 +294,7 @@ def main() -> None:
         n_outlier_candidates  = cfg["n_outlier_candidates"],
         tight_radius          = cfg["tight_radius"],
         loose_radius          = cfg["loose_radius"],
-        multi_threshold       = cfg["outlier_multi_threshold"],
+        fmm_threshold         = cfg["outlier_fmm_threshold"],
         max_outlier_fraction  = cfg["max_outlier_fraction"],
         fmm_length_alpha_grid = cfg["fmm_alpha_grid"],
         fmm_length_omega_grid = cfg["fmm_omega_grid"],

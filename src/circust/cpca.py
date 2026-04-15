@@ -21,7 +21,7 @@ Dos criterios en logica OR — una muestra se elimina si viola cualquiera:
        Muestras con distancia al origen en espacio PC1-PC2 muy pequena
        disrumpen la estructura circular y reflejan desalineaciones individuales.
 
-    2. Residuos FMM: |ri| > multi_threshold (3.0)  para cualquier gen core
+    2. Residuos FMM: |ri| > fmm_threshold (3.0)  para cualquier gen core
        Detecta errores de medicion u otras anomalias comunes entre genes.
 
 Si se detectan outliers, se eliminan, se renormaliza la matriz core y se
@@ -95,7 +95,7 @@ class CPCAResult:
 
     fmm_outliers : list[int]
         Subconjunto de samples_dropped detectados exclusivamente por
-        el criterio de residuos FMM (|ri| > multi_threshold).
+        el criterio de residuos FMM (|ri| > fmm_threshold).
 
     Campos de diagnostico (para visualizacion)
     ------------------------------------------
@@ -180,8 +180,8 @@ class CPCA:
 
     Parametros — deteccion de outliers FMM
     ---------------------------------------
-    multi_threshold : float
-        Umbral de residuo FMM estandarizado. Muestras con |ri| > multi_threshold
+    fmm_threshold : float
+        Umbral de residuo FMM estandarizado. Muestras con |ri| > fmm_threshold
         en cualquier gen core se declaran outliers. Por defecto: 3.0.
 
     max_outlier_fraction : float
@@ -221,7 +221,7 @@ class CPCA:
         tight_radius:             float     = 0.10,
         loose_radius:             float     = 0.15,
         # Outlier detection
-        multi_threshold:          float     = 3.0,
+        fmm_threshold:          float     = 3.0,
         max_outlier_fraction:     float     = 0.05,
         # FMM fitting
         fmm_length_alpha_grid:    int       = 48,
@@ -233,7 +233,7 @@ class CPCA:
         self.n_outlier_candidates     = n_outlier_candidates
         self.tight_radius             = tight_radius
         self.loose_radius             = loose_radius
-        self.multi_threshold          = multi_threshold
+        self.fmm_threshold          = fmm_threshold
         self.max_outlier_fraction     = max_outlier_fraction
         self.fmm_length_alpha_grid    = fmm_length_alpha_grid
         self.fmm_length_omega_grid    = fmm_length_omega_grid
@@ -482,7 +482,7 @@ class CPCA:
         Aplica criterios de outlier en logica OR (Sec. 3.3 suplementario):
 
           1. CPCA radial (LEi < tight_radius): ya en outlier_idx.
-          2. FMM residuos (|ri| > multi_threshold): para cualquier gen core.
+          2. FMM residuos (|ri| > fmm_threshold): para cualquier gen core.
 
         Devuelve
         --------
@@ -500,7 +500,7 @@ class CPCA:
         core_res = std_res_df.loc[genes_found].values  # (n_genes, n_samples)
         fmm_cands: list[int] = []
         for i in range(len(genes_found)):
-            for pos in np.where(np.abs(core_res[i]) > self.multi_threshold)[0]:
+            for pos in np.where(np.abs(core_res[i]) > self.fmm_threshold)[0]:
                 fmm_cands.append(int(sample_order[pos]))
 
         # Union OR con tope
