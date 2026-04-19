@@ -134,6 +134,8 @@ class CPCAResult:
     std_residuals_fmm:     Optional[pd.DataFrame]    = None
     fmm_fits_initial:      dict                      = field(default_factory=dict)
     cosinor_fits_initial:  dict                      = field(default_factory=dict)
+    pc1_initial:           np.ndarray                = field(default_factory=lambda: np.array([]))
+    pc2_initial:           np.ndarray                = field(default_factory=lambda: np.array([]))
 
     def summary(self) -> str:
         n_cpca = len(self.samples_dropped) - len(self.fmm_outliers)
@@ -290,6 +292,11 @@ class CPCA:
         self._log(f"  Criterio FMM residuos    : {len(fmm_outs)} muestra(s)")
         self._log(f"  Total eliminados         : {len(all_dropped)}")
 
+        # Guardar proyecciones iniciales (antes de posible re-ejecucion)
+        # para visualizacion del scatter con outliers
+        pc1_initial = pc1.copy()
+        pc2_initial = pc2.copy()
+
         # ── Paso 5: limpiar + re-ejecutar CPCA si hay outliers ───────────
         if all_dropped:
             self._log("  Re-ejecutando CPCA sobre datos limpios ...")
@@ -329,6 +336,8 @@ class CPCA:
             std_residuals_fmm    = std_res_df,
             fmm_fits_initial     = fmm_fits_ini,
             cosinor_fits_initial = cos_fits_ini,
+            pc1_initial          = pc1_initial,
+            pc2_initial          = pc2_initial,
         )
 
         self._log(result.summary())

@@ -133,7 +133,9 @@ def plot_pipeline_summary(
 
 def _draw_pc_scatter(ax, cpca: "CPCAResult") -> None:
     """Dispersión PC mini para el panel resumen."""
-    pc1, pc2 = cpca.pc1, cpca.pc2
+    # Usar proyecciones iniciales para mostrar outliers en su posicion original
+    pc1 = cpca.pc1_initial if len(cpca.pc1_initial) > 0 else cpca.pc1
+    pc2 = cpca.pc2_initial if len(cpca.pc2_initial) > 0 else cpca.pc2
     var = cpca.variance_explained
     dropped = set(cpca.samples_dropped)
 

@@ -72,11 +72,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
 from circust.synchronizer import CircularSynchronizer
-from circust.nonparametric import NonParametricScorer
-from circust.candidate_selection import CandidateSelector
-from circust.reference_set import ReferenceSetBuilder
+from circust.top_genes import TopGeneSelector
 from circust.random_selection import RandomSelector
-from circust.top_matrix import build_top_matrix
 from circust.robust_estimation import RobustEstimator
 from circust.core_genes import CoreGeneSelector
 
@@ -376,82 +373,45 @@ def main() -> None:
     print(f"    Saved: sample_order.csv")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3.1 — Puntuación de ritmicidad no paramétrica (PAVA)
+    # Etapa 3 — Selección de genes TOP
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3.1: Puntuación de Ritmicidad No Paramétrica")
+    _banner("Etapa 3: Selección de Genes TOP")
 
-    np_scorer = NonParametricScorer(verbose=True)
-    np_result = np_scorer.run(order_result.expr_ordered)
-
-    _save_text(np_result.summary(), results_dir / "nonparametric_summary.txt")
-
-    np_df = pd.DataFrame({
-        "gene":   np_result.gene_names,
-        "r2_np":  np_result.r2,
-        "mse_np": np_result.mse_np,
-    }).sort_values("r2_np", ascending=False)
-    np_df.to_csv(results_dir / "nonparametric_r2.csv", index=False)
-    print(f"    Saved: nonparametric_r2.csv")
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3.2 — Selección de genes candidatos por sectores circulares
-    # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3.2: Selección de Genes Candidatos")
-
-    candidate_selector = CandidateSelector(
-        tam=50,
+    top_selector = TopGeneSelector(
+        r2_ori_threshold=0.5,
+        r2_fmm_threshold=0.5,
         omega_min=0.1,
-        r2_par_floor=0.4,
+        n_sectors=4,
         fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
         fmm_length_omega_grid=cfg["fmm_omega_grid"],
         fmm_num_reps=cfg["fmm_reps"],
+        n_jobs=-1,
         verbose=True,
     )
-    candidate_result = candidate_selector.run(
-        r2_np          = np_result.r2,
+    top_result = top_selector.run(
         expr_norm      = order_result.expr_ordered,
         circular_scale = order_result.circular_scale,
-        r2_par_core    = order_result.r2_fmm,
-    )
-
-    _save_text(candidate_result.summary(), results_dir / "candidate_summary.txt")
-
-    cand_df = pd.DataFrame({
-        "gene":     candidate_result.gene_names,
-        "sector":   candidate_result.sector_labels,
-        "fmm_peak": candidate_result.fmm_peaks,
-        "r2_par":   candidate_result.r2_par,
-    }).sort_values(["sector", "r2_par"], ascending=[True, False])
-    cand_df.to_csv(results_dir / "candidate_genes.csv", index=False)
-    print(f"    Saved: candidate_genes.csv")
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3.3 / 3.4 — Conjunto de referencia mínimo
-    # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3.3 / 3.4: Conjunto de Referencia Mínimo")
-
-    refset_builder = ReferenceSetBuilder(
-        arntl_gene=cfg["anchor_gene"],
-        dbp_gene=cfg["direction_gene"],
-        verbose=True,
-    )
-    refset_result = refset_builder.run(
-        candidate      = candidate_result,
-        expr_full_norm = order_result.expr_ordered,
-        circular_scale = order_result.circular_scale,
+        seed_genes     = core_genes_found,
         sample_order   = order_result.sample_order,
-        r2_np_all      = np_result.r2,
-        gene_names_all = np_result.gene_names,
     )
 
-    _save_text(refset_result.summary(), results_dir / "reference_set_summary.txt")
-    pd.DataFrame({
-        "gene":     refset_result.gene_names,
-        "sector":   refset_result.sector_labels,
-        "fmm_peak": refset_result.fmm_peaks,
-        "r2_par":   refset_result.r2_par,
-    }).to_csv(results_dir / "reference_set.csv", index=False)
-    print(f"    Saved: reference_set.csv")
+    _save_text(top_result.summary(), results_dir / "top_genes_summary.txt")
+
+    top_df = pd.DataFrame({
+        "gene":     top_result.gene_names,
+        "sector":   top_result.sector_labels,
+        "fmm_peak": top_result.fmm_peaks,
+        "r2_par":   top_result.r2_par,
+        "r2_ori":   top_result.r2_ori,
+        "omega":    top_result.omega,
+    }).sort_values(["sector", "r2_par"], ascending=[True, False])
+    top_df.to_csv(results_dir / "top_genes.csv", index=False)
+    print(f"    Saved: top_genes.csv")
+
+    top_result.candidate_matrix.to_csv(results_dir / "top_matrix.csv")
+    print(f"    Saved: top_matrix.csv")
+    print(f"  Matriz TOP: {top_result.candidate_matrix.shape[0]} genes x "
+          f"{top_result.candidate_matrix.shape[1]} muestras")
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 3.5 / 3.6 — Selección aleatoria controlada
@@ -469,7 +429,7 @@ def main() -> None:
         verbose=True,
     )
     random_result = random_selector.run(
-        reference      = refset_result,
+        reference      = top_result,
         expr_full_norm = order_result.expr_ordered,
     )
 
@@ -489,23 +449,6 @@ def main() -> None:
     print(f"    Saved: random_selections.csv")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3.7 — Construcción de la matriz TOP
-    # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3.7: Matriz TOP (cores + candidatos)")
-
-    top_matrix = build_top_matrix(
-        core_genes         = core_genes_found,
-        candidate_names    = refset_result.gene_names,
-        expr_full_norm     = order_result.expr_ordered,
-        candidate_norm_ord = refset_result.candidate_matrix,
-        sample_order       = np.arange(order_result.expr_ordered.shape[1]),
-        genes_to_exclude   = refset_result.added_genes,
-    )
-    print(f"  Matriz TOP: {top_matrix.shape[0]} genes x {top_matrix.shape[1]} muestras")
-    top_matrix.to_csv(results_dir / "top_matrix.csv")
-    print(f"    Saved: top_matrix.csv")
-
-    # ─────────────────────────────────────────────────────────────────────
     # Etapa 4 — Estimación robusta
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 4: Estimación Robusta")
@@ -520,7 +463,7 @@ def main() -> None:
     )
     robust_result = robust_est.run(
         random_selection = random_result,
-        top_matrix       = top_matrix,
+        top_matrix       = top_result.candidate_matrix,
         expr_full_norm   = order_result.expr_ordered,
         core_genes       = core_genes_found,
     )
@@ -597,9 +540,9 @@ def main() -> None:
     print(f"  Muestras (limpias) : {cpca_result.expr_norm_final.shape[1]}")
     print(f"  Outliers eliminados: {len(cpca_result.samples_dropped)}")
     print(f"  Inversión direcc.  : {order_result.direction_flipped}")
-    print(f"  Mediana R² NP      : {float(np.median(np_result.r2)):.3f}")
-    print(f"  Genes candidatos   : {len(candidate_result.gene_names)}")
-    print(f"  Conjunto referencia: {len(refset_result.gene_names)}")
+    print(f"  Genes tras ORI     : {top_result.n_after_ori}")
+    print(f"  Genes tras FMM     : {top_result.n_after_fmm}")
+    print(f"  Genes TOP finales  : {len(top_result.gene_names)}")
     print(f"  Repeticiones K     : {robust_result.sample_orders.shape[0]}")
     print(f"  Flips de orient.   : {int(robust_result.direction_flipped.sum())}")
     print(f"  Salida             : {output_dir.resolve()}")

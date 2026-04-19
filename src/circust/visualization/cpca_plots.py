@@ -100,12 +100,25 @@ def plot_pc_scatter(
     --------
     matplotlib.figure.Figure
     """
-    pc1  = result.pc1
-    pc2  = result.pc2
+    # Usar proyecciones iniciales (pre-eliminacion de outliers) para
+    # poder mostrar donde caian las muestras eliminadas
+    pc1  = result.pc1_initial if len(result.pc1_initial) > 0 else result.pc1
+    pc2  = result.pc2_initial if len(result.pc2_initial) > 0 else result.pc2
     var  = result.variance_explained
-    cand = result.outlier_candidate_idx   # indices in original sample space
-    conf = result.outlier_idx
-    used_loose = result.used_loose_radius
+
+    # Derivar candidatos a outlier y radio activo a partir de las
+    # proyecciones, replicando la logica de CPCA._cpca_step
+    norm12   = np.sqrt(pc1**2 + pc2**2)
+    n_cands  = min(8, len(norm12))
+    cand     = np.argsort(norm12)[:n_cands]
+    tight_mask = norm12[cand] <= 0.10
+    if tight_mask.any():
+        conf = cand[tight_mask]
+        used_loose = False
+    else:
+        loose_mask = norm12[cand] <= 0.15
+        conf = cand[loose_mask]
+        used_loose = True
 
     # Límites de ejes — simétricos, con pequeño margen, determinados por los datos
     maxi = round(max(np.abs(pc1).max(), np.abs(pc2).max()), 1) + 0.05
@@ -182,7 +195,7 @@ def plot_pc_scatter(
     loose_note = "  [loose radius]" if used_loose else ""
     ax.set_title(
         f"{title_str}PC1 vs PC2 — core clock genes\n"
-        f"n_outliers={result.n_outliers}{loose_note}",
+        f"n_outliers={len(result.samples_dropped)}{loose_note}",
         fontsize=11,
     )
 
@@ -226,23 +239,23 @@ def plot_gene_panels(
 
     Lanza
     -----
-    AttributeError
-        Si result.core_matrix es None (CPCA ejecutado con store_core_matrix=False).
+    ValueError
+        Si result.core_norm_final es None.
     """
-    if result.core_matrix is None:
-        raise AttributeError(
-            "result.core_matrix is None. "
-            "Run CPCA with store_core_matrix=True (the default) to enable gene panels."
-        )
+    genes       = result.core_genes_found
+    phi         = result.circular_scale       # sorted phi values [0, 2π)
+    order       = result.sample_order         # indices that sort by phi
+    var         = result.variance_explained
 
-    genes        = result.core_genes_found
-    core_matrix  = result.core_matrix          # shape: (n_genes, n_samples)
-    order        = result.sample_order         # indices that sort by phi
-    phi          = result.circular_scale       # sorted phi values [0, 2π)
-    outs_pos     = result.outlier_positions_in_order   # positions WITHIN order
-    n_outliers   = result.n_outliers
-    pc1, pc2, pc3 = result.pc1, result.pc2, result.pc3
-    var           = result.variance_explained
+    # core_norm_final ya está ordenada por fase circular
+    cm = result.core_norm_final.values if hasattr(result.core_norm_final, 'values') \
+         else result.core_norm_final
+    core_ordered = cm                          # (n_genes, n_samples) ya ordenada
+
+    # Eigengenes ordenados por fase
+    pc1_ordered = result.pc1[order]
+    pc2_ordered = result.pc2[order]
+    pc3_ordered = result.pc3[order]
 
     # Número de paneles: uno por gen + tres paneles de eigengenes
     n_gene_panels  = len(genes)
@@ -259,34 +272,11 @@ def plot_gene_panels(
     fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
     axes_flat = axes.flatten()
 
-    # Expresión y eigengenes ordenados
-    # core_matrix puede ser un DataFrame (índice de genes × columnas de muestras) — usar .iloc
-    cm = core_matrix.values if hasattr(core_matrix, 'values') else core_matrix
-    core_ordered = cm[:, order]          # (n_genes, n_samples) sorted
-    pc1_ordered  = pc1[order]
-    pc2_ordered  = pc2[order]
-    pc3_ordered  = pc3[order]
-
-    # Colores de outliers indexados por su rango en outlier_positions_in_order
-    # outs_pos contiene posiciones dentro de order — misma lógica de rango que col=i en R
-    outlier_phi_positions = outs_pos  # positions in [0..n_samples-1] in ordered space
-
-    def _add_outlier_marks(ax, y_values):
-        """Marcar posiciones de outliers en un panel con cuadrados coloreados."""
-        for rank, pos in enumerate(outlier_phi_positions):
-            if 0 <= pos < len(phi):
-                col = _outlier_colour(rank)
-                ax.scatter(phi[pos], y_values[pos],
-                           s=60, marker="s",
-                           facecolors="none", edgecolors=col,
-                           linewidths=1.5, zorder=5)
-
     # ── Paneles de expresión génica ───────────────────────────────────────────────
     for i, gene in enumerate(genes):
         ax = axes_flat[i]
         y  = core_ordered[i]
         ax.plot(phi, y, "b-o", markersize=2.5, linewidth=0.8, zorder=3)
-        _add_outlier_marks(ax, y)
         ax.set_title(gene, fontsize=8, pad=2)
         ax.set_xlim(0, 2 * np.pi)
         ax.tick_params(labelbottom=False, labelleft=False,
@@ -303,7 +293,6 @@ def plot_gene_panels(
         ax = axes_flat[n_gene_panels + j]
         ax.plot(phi, y_vals, "k-o", markersize=2.5, linewidth=0.8, zorder=3)
         ax.axhline(0, color="#DDDDDD", linewidth=0.6, zorder=0)
-        _add_outlier_marks(ax, y_vals)
         ax.set_title(panel_title, fontsize=8, pad=2)
         ax.set_xlim(0, 2 * np.pi)
         ax.tick_params(labelbottom=False, labelleft=False,
