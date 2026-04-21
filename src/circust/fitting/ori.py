@@ -147,15 +147,15 @@ def pava_increasing(y: np.ndarray, w: np.ndarray | None = None) -> np.ndarray:
 
     Complejidad: O(n) tiempo, O(n) espacio.
 
-    Parametros
+    Parameters
     ----------
     y : array (n,)
         Valores observados.
     w : array (n,) o None
         Pesos positivos. Si es None, pesos uniformes.
 
-    Devuelve
-    --------
+    Returns
+    -------
     array (n,) — valores ajustados monotonicamente no decrecientes.
     """
     y = np.ascontiguousarray(np.asarray(y, dtype=np.float64))
@@ -222,12 +222,12 @@ def find_local_extrema(v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Un punto i es un maximo local si  v[i-1] <= v[i]  Y  v[i] >= v[i+1],
     con indices envolventes circulares. Minimos definidos simetricamente.
 
-    Parametros
+    Parameters
     ----------
     v : array (n,)
 
-    Devuelve
-    --------
+    Returns
+    -------
     candL : array int — indices de minimos locales (valles).
     candU : array int — indices de maximos locales (picos).
     """
@@ -546,13 +546,13 @@ def circular_unimodal_fit(
     el menor MSE al ajustar un PAVA creciente de L->U y un PAVA
     decreciente de U->L (circularmente).
 
-    Parametros
+    Parameters
     ----------
     v : array (n,)
         Valores de expresion genica ordenados por tiempo circular.
 
-    Devuelve
-    --------
+    Returns
+    -------
     fitted : array (n,) — valores ajustados.
     mse    : float      — error cuadratico medio.
     L_opt  : int        — indice del valle optimo (base 0).
@@ -662,7 +662,7 @@ class ORIModel(RhythmModel):
     Los "parametros" del modelo son los indices del valle (L_opt)
     y pico (U_opt) optimos; el R2 compara contra el modelo plano.
 
-    Ejemplo
+    Example
     -------
     >>> import numpy as np
     >>> from circust.fitting.ori import ORIModel
@@ -694,7 +694,7 @@ class ORIModel(RhythmModel):
         """
         Ajusta el modelo ORI a ``data``.
 
-        Parametros
+        Parameters
         ----------
         data : np.ndarray, forma (n_muestras,)
             Valores de expresion ordenados por el tiempo circular
@@ -702,8 +702,8 @@ class ORIModel(RhythmModel):
         time_points : np.ndarray, forma (n_muestras,)
             Eje temporal circular en [0, 2*pi), producido por CPCA.
 
-        Devuelve
-        --------
+        Returns
+        -------
         FitResult
             Claves de ``params``: ``L_opt``, ``U_opt``.
 

@@ -76,8 +76,8 @@ def plot_core_gene_fits(
     show_eigengenes : bool
         Si es True, incluir paneles PC1/PC2/PC3 al final.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     time_points = result.circular_scale
@@ -200,8 +200,8 @@ def plot_residual_strips(
     title : str
     figsize : tuple, opcional
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     std_res = result.std_residuals_fmm  # DataFrame (genes × samples)
@@ -297,8 +297,8 @@ def plot_residual_heatmap(
     title : str
     figsize : tuple, opcional
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     std_res = result.std_residuals_fmm

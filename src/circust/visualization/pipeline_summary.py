@@ -86,8 +86,8 @@ def plot_pipeline_summary(
     figsize : tuple
         Tamano de la figura en pulgadas (ancho, alto).
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     fig = plt.figure(figsize=figsize)
@@ -305,8 +305,8 @@ def plot_variance_explained(
     figsize : tuple
         Tamano de la figura en pulgadas.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     var = cpca_result.variance_explained
@@ -400,8 +400,8 @@ def plot_expression_overview(
     figsize : tuple, opcional
         Tamano de la figura en pulgadas.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     # Seleccionar genes top por varianza (más rítmicos)

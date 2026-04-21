@@ -207,15 +207,15 @@ def _step1_grid(
     3x3 casi singulares que aparecen cuando omega esta cerca de cero. El
     intercepto M se recupera analiticamente de la ecuacion de medias.
 
-    Parametros
+    Parameters
     ----------
     alpha_grid : array (A,) de valores alpha
     omega_grid : array (W,) de valores omega
     data       : array (N,) senal observada
     t          : array (N,) puntos temporales en [0, 2*pi)
 
-    Devuelve
-    --------
+    Returns
+    -------
     array (A*W, 6) — columnas: [M, A, alpha, beta, omega, RSS]
     Mismo layout de columnas que ``_step1`` escalar.
     """
@@ -296,8 +296,8 @@ def _step1_grid_cuda(
     Esta opcion queda documentada como trabajo futuro una vez el pipeline
     principal este validado.
 
-    Devuelve
-    --------
+    Returns
+    -------
     array (A*W, 6) — mismo layout que ``_step1_grid`` (CPU).
     """
     from numba import cuda as _cuda
@@ -481,7 +481,7 @@ class FMMModel(RhythmModel):
     Ajusta  y(t) = M + A*cos(beta + 2*atan(omega*tan((t - alpha)/2)))
     usando un algoritmo de dos pasos: busqueda en rejilla + Nelder-Mead.
 
-    Parametros
+    Parameters
     ----------
     length_alpha_grid : int
         Numero de valores de alpha en la rejilla. Valor R por defecto: 48.
@@ -492,7 +492,7 @@ class FMMModel(RhythmModel):
     num_reps : int
         Numero de iteraciones de refinamiento de rejilla. Valor R por defecto: 3.
 
-    Ejemplo
+    Example
     -------
     >>> import numpy as np
     >>> from circust.fitting.fmm import FMMModel
@@ -543,15 +543,15 @@ class FMMModel(RhythmModel):
         """
         Ajusta el modelo FMM a ``data``.
 
-        Parametros
+        Parameters
         ----------
         data : np.ndarray, forma (n_muestras,)
             Valores de expresion observados (normalizados a [-1, 1]).
         time_points : np.ndarray, forma (n_muestras,)
             Eje temporal circular en [0, 2*pi), tipicamente ``CPCAResult.circular_scale``.
 
-        Devuelve
-        --------
+        Returns
+        -------
         FitResult
             Claves de ``params``: ``M``, ``A``, ``alpha``, ``beta``, ``omega``
         """

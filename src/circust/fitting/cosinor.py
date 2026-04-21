@@ -46,7 +46,7 @@ class CosinorModel(RhythmModel):
     como test de ritmicidad independiente como estimador de parametros
     iniciales dentro de FMM.
 
-    Ejemplo
+    Example
     -------
     >>> import numpy as np
     >>> from circust.fitting.cosinor import CosinorModel
@@ -75,15 +75,15 @@ class CosinorModel(RhythmModel):
         """
         Ajusta el modelo Cosinor a ``data``.
 
-        Parametros
+        Parameters
         ----------
         data : np.ndarray, forma (n_muestras,)
             Valores de expresion observados (normalizados a [-1, 1]).
         time_points : np.ndarray, forma (n_muestras,)
             Eje temporal circular en [0, 2*pi).
 
-        Devuelve
-        --------
+        Returns
+        -------
         FitResult
             Claves de ``params``: ``M``, ``A``, ``phi``
             ``phi`` es directamente el tiempo de pico en [0, 2*pi).

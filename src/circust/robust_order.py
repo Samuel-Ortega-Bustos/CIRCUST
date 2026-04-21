@@ -215,12 +215,12 @@ def _coram_alpha3(orders: np.ndarray) -> np.ndarray:
       - Si (theta_l - theta_j) mod 2pi in (3pi/2, 2pi):
             d[j,l] = 3*(1-cos(theta_j-theta_l)), d[l,j] = 1-cos(theta_j-theta_l)
 
-    Parametros
+    Parameters
     ----------
     orders : array (K, n) — cada fila es una permutacion de 0..n-1.
 
-    Devuelve
-    --------
+    Returns
+    -------
     D : array (n, n) — matriz de distancias asimetricas promediada.
     """
     K, n = orders.shape
@@ -444,14 +444,14 @@ def _solve_tsp_multi(dist: np.ndarray, coef: int = 3) -> np.ndarray:
     Replica la estrategia de isocir/ACO.R que lanza 6 heuristicas con
     coef*n repeticiones y selecciona el tour de menor coste.
 
-    Parametros
+    Parameters
     ----------
     dist : array (n, n) — matriz de distancias asimetricas.
     coef : int — factor multiplicativo para el numero de intentos por
         heuristica (coef * n intentos con diferentes nodos de inicio).
 
-    Devuelve
-    --------
+    Returns
+    -------
     tour : array (n,) — permutacion optima encontrada.
     """
     n = dist.shape[0]
@@ -501,12 +501,12 @@ def _hodge_aggregate(orders: np.ndarray) -> np.ndarray:
     i sobre j: si en la mayoria de los K ordenes i precede a j (en sentido
     circular), X[i,j] > 0.
 
-    Parametros
+    Parameters
     ----------
     orders : array (K, n) — cada fila es una permutacion.
 
-    Devuelve
-    --------
+    Returns
+    -------
     consensus : array (n,) — permutacion consenso.
     """
     K, n = orders.shape
@@ -583,14 +583,14 @@ def _clma_refine(order: np.ndarray, orders: np.ndarray,
     retroceder (backward) para verificar que las tripletas previas siguen
     siendo optimas. Itera hasta convergencia.
 
-    Parametros
+    Parameters
     ----------
     order : array (n,) — orden inicial a refinar.
     orders : array (K, n) — los K ordenes originales.
     objective : str — "msce" o "cktau".
 
-    Devuelve
-    --------
+    Returns
+    -------
     refined : array (n,) — orden refinado.
     """
     n = len(order)
@@ -875,7 +875,7 @@ class RobustOrderEstimator:
     TOP, la ejecucion de CPCA + sincronizacion por repeticion, y la
     seleccion del orden final.
 
-    Parametros
+    Parameters
     ----------
     n_reps : int
         Numero K de repeticiones aleatorias. Por defecto: 5.
@@ -962,7 +962,7 @@ class RobustOrderEstimator:
         """
         Ejecuta la estimacion robusta completa.
 
-        Parametros
+        Parameters
         ----------
         top_result : TopGeneResult
             Salida de ``TopGeneSelector.run()``. Debe tener los campos
@@ -980,8 +980,8 @@ class RobustOrderEstimator:
             Genes de evaluacion para calcular mediana R² por repeticion.
             Si None, se usan los core_genes.
 
-        Devuelve
-        --------
+        Returns
+        -------
         RobustOrderResult
         """
         self._log("=== Etapa 4: Estimacion de Orden Robusto ===")
@@ -1067,8 +1067,8 @@ class RobustOrderEstimator:
         Genera K extracciones aleatorias del conjunto TOP con
         restricciones de cobertura y calidad.
 
-        Devuelve
-        --------
+        Returns
+        -------
         sel_names : array object (K, tam)
         n_attempts : int
         fallback_used : bool
@@ -1438,8 +1438,8 @@ class RobustOrderEstimator:
         4. Tomar el mejor de los dos segun MSCE.
         5. Refinar con CLM (forward + backward).
 
-        Devuelve
-        --------
+        Returns
+        -------
         final_order : array (n_samp,) — permutacion consenso.
         final_scale : array (n_samp,) — escala circular derivada.
         """

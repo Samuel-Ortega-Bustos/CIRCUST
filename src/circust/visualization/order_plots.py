@@ -91,8 +91,8 @@ def plot_circular_peaks(
         Si es True, mostrar etiquetas de tiempo circadiano (CT0, CT6, …)
         alrededor del anillo exterior.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     genes = result.core_genes
@@ -223,8 +223,8 @@ def plot_ordered_profiles(
     figsize : tuple, opcional
         Tamano de la figura en pulgadas (ancho, alto).
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     from circust.fitting.fmm import FMMModel
@@ -329,8 +329,8 @@ def plot_r2_comparison(
     title : str
     figsize : tuple
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     genes = result.core_genes
@@ -410,8 +410,8 @@ def plot_day_night_diagram(
     title : str
     figsize : tuple
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     genes = result.core_genes

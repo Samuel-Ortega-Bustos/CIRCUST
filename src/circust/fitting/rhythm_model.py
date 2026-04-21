@@ -33,8 +33,8 @@ class FitResult:
     """
     Resultado de cualquier modelo de ajuste ritmico.
 
-    Atributos
-    ---------
+    Attributes
+    ----------
     fitted : np.ndarray, dim (n_muestras,)
         Valores predichos por el modelo en cada punto temporal.
 
@@ -119,15 +119,15 @@ class RhythmModel(ABC):
 
         El ``FitResult`` devuelto incluye ``peak_time`` ya calculado.
 
-        Parametros
+        Parameters
         ----------
         data : np.ndarray, forma (n_muestras,)
             Valores de expresion normalizados (tipicamente en [-1, 1]).
         time_points : np.ndarray, forma (n_muestras,)
             Eje temporal circular en [0, 2*pi), producido por CPCA.
 
-        Devuelve
-        --------
+        Returns
+        -------
         FitResult
         """
 

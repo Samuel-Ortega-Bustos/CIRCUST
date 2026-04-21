@@ -5,7 +5,7 @@ Modulo de seleccion de genes core (reloj circadiano) para el pipeline CIRCUST.
 
 Responsabilidad
 ---------------
-Este modulo resuelve QUE genes core se usan en la ejecucion y valida
+Este modulo resuelve que genes core se usan en la ejecucion y valida
 que esos genes esten presentes en la matriz de expresion. Es el unico
 punto del pipeline donde se toma esa decision.
 
@@ -33,15 +33,6 @@ Uso tipico
 >>> sel    = CoreGeneSelector(custom_genes=["ARNTL", "DBP", "PER1", "PER2"])
 >>> result = sel.select(prep.expr_norm)
 
-Punto de extension para seleccion automatica
---------------------------------------------
-Subclasificar :class:CoreGeneSelector y sobrescribir :metodo:_auto_select
-para implementar en el futuro seleccion automatica:
-
->>> class AutoCoreGeneSelector(CoreGeneSelector):
-...     def _auto_select(self, expr_norm):
-...         # logica de seleccion automatica aqui
-...         return ["ARNTL", "PER1", ...]
 
 Posicion en el pipeline
 -----------------------
@@ -96,8 +87,8 @@ class CoreGeneResult:
     """
     Resultado de la seleccion de genes core.
 
-    Atributos
-    ---------
+    Attributes
+    ----------
     genes : list[str]
         Genes seleccionados y validados (presentes en la matriz de expresion).
         Es el valor que consume CPCA y el resto del pipeline.
@@ -139,18 +130,18 @@ class CoreGeneSelector:
     """
     Selecciona y valida los genes core del reloj circadiano.
 
-    Parametros
+    Parameters
     ----------
     preset : str o None
         Nombre del conjunto predefinido: "circust", "zhang", "ruben".
         Se ignora si se pasa custom_genes.
-        Si ambos son None se usa "circust" por defecto.
+        Si ambos son None se usa **"circust"** por defecto.
 
     custom_genes : list[str] o None
         Lista explicita de simbolos genicos. Tiene prioridad sobre "preset".
 
     verbose : bool
-        Si True, imprime el resumen de seleccion al llamar a :metodo:select.
+        Si True, imprime el resumen de seleccion al llamar a :meth:`select`.
 
     Raises
     ------
@@ -192,14 +183,14 @@ class CoreGeneSelector:
         """
         Valida los genes solicitados contra la matriz de expresion.
 
-        Parametros
+        Parameters
         ----------
         expr_norm : pd.DataFrame
             Matriz de expresion normalizada, genes x muestras.
             Tipicamente PreprocessingResult.expr_norm.
 
-        Devuelve
-        --------
+        Returns
+        -------
         CoreGeneResult
             result.genes contiene la lista validada lista para CPCA.
 
@@ -250,7 +241,7 @@ class CoreGeneSelector:
         - ``"circust"``      → preset con ese nombre
         - ``"PER1,PER2,..."`` → lista separada por comas
 
-        Parametros
+        Parameters
         ----------
         raw : str o None
             Valor del argumento ``--core-genes`` de la CLI.

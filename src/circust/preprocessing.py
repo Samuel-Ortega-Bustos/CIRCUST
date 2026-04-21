@@ -40,7 +40,7 @@ def load_expression_matrix(
     .xlsx / .xls    Libro Excel (se lee la primera hoja)
     .parquet        Apache Parquet — recomendado para conjuntos grandes
 
-    Parametros
+    Parameters
     ----------
     path : str
         Ruta al archivo. El formato se detecta por la extension.
@@ -56,15 +56,15 @@ def load_expression_matrix(
         Si None (defecto), se carga el archivo completo de una vez.
         Ignorado para CSV/TSV/Excel.
 
-    Devuelve
-    --------
+    Returns
+    -------
     pd.DataFrame
         Matriz con simbolos genicos como indice de fila (index.name = "gene_symbol")
         e IDs de muestra como nombres de columna. Todos los valores son float64.
         Celdas que no se pudieron parsear como numeros se establecen a NaN.
 
-    Excepciones
-    -----------
+    Raises
+    ------
     FileNotFoundError
         Si no existe archivo en ``path``.
     ValueError
@@ -72,7 +72,7 @@ def load_expression_matrix(
     ImportError
         Si se lee un .parquet y pyarrow no esta instalado.
 
-    Ejemplo
+    Example
     -------
     Cargar un CSV estandar:
 
@@ -193,8 +193,8 @@ class PreprocessingResult:
     """
     Todos los resultados producidos por :class:`Preprocessor`.
 
-    Atributos
-    ---------
+    Attributes
+    ----------
     expr_norm : pd.DataFrame
         Matriz de expresion normalizada, genes x muestras, valores en [-1, 1].
         Es la matriz que consume cada paso (CPCA, FMM).
@@ -258,15 +258,15 @@ def normalise_matrix(
 
     Filas constantes (min == max) se mapean a todos ceros.
 
-    Parametros
+    Parameters
     ----------
     mat : pd.DataFrame
         Matriz genes × muestras. Valores pueden ser float o int.
     norm_min, norm_max : float
         Extremos del rango de salida. Por defecto [-1, 1].
 
-    Devuelve
-    --------
+    Returns
+    -------
     pd.DataFrame con la misma forma e indices que ``mat``.
     """
     values  = mat.values.astype(float)
@@ -291,7 +291,7 @@ class Preprocessor:
     3. Resolver nombres de genes duplicados — conservar la fila con mayor MAD
     4. Normalizar cada gen a [-1, 1]
 
-    Parametros
+    Parameters
     ----------
     sparse_threshold : float
         Fraccion de muestras que pueden ser cero o NaN antes de que un gen
@@ -309,7 +309,7 @@ class Preprocessor:
     verbose : bool
         Si True, imprime mensajes de progreso tras cada paso.
 
-    Ejemplo
+    Example
     -------
     >>> import pandas as pd
     >>> import numpy as np
@@ -353,14 +353,14 @@ class Preprocessor:
         """
         Ejecuta los cuatro pasos de preprocesamiento en orden.
 
-        Parametros
+        Parameters
         ----------
         matrix : pd.DataFrame
             Matriz de expresion bruta cargada por ``load_expression_matrix()``.
             Filas = genes, columnas = muestras. Puede contener ceros y NaN.
 
-        Devuelve
-        --------
+        Returns
+        -------
         PreprocessingResult
         """
 

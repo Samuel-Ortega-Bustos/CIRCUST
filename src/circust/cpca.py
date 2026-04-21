@@ -204,7 +204,7 @@ class CPCA:
     verbose : bool
         Imprimir mensajes de progreso.
 
-    Ejemplo
+    Example
     -------
     >>> from circust.preprocessing import load_expression_matrix, Preprocessor
     >>> from circust.cpca import CPCA
@@ -250,14 +250,14 @@ class CPCA:
         """
         Ejecuta CPCA + deteccion de outliers sobre la matriz completa.
 
-        Parametros
+        Parameters
         ----------
         expr_norm : pd.DataFrame, forma (n_genes, n_muestras)
             Matriz de expresion normalizada completa (valores en [-1, 1]).
             Es ``PreprocessingResult.expr_norm``.
 
-        Devuelve
-        --------
+        Returns
+        -------
         CPCAResult
         """
         self._log("=== Etapa 1.1: CPCA ===")
@@ -377,8 +377,8 @@ class CPCA:
         """
         Ejecuta un paso de CPCA sobre la matriz core normalizada.
 
-        Devuelve
-        --------
+        Returns
+        -------
         (sample_order, circular_scale, pc1, pc2, pc3, var_exp, outlier_idx)
         """
         values = core_matrix.values.astype(float)
@@ -434,8 +434,8 @@ class CPCA:
         Ajusta FMM y Cosinor en genes core + eigengenes (PC1/PC2/PC3)
         usando el ordenamiento CPCA inicial.
 
-        Devuelve
-        --------
+        Returns
+        -------
         fmm_fits   : {nombre: FitResult}
         cos_fits   : {nombre: FitResult}
         std_res_df : DataFrame (senales x muestras) de residuos estandarizados
@@ -493,8 +493,8 @@ class CPCA:
           1. CPCA radial (LEi < tight_radius): ya en outlier_idx.
           2. FMM residuos (\|ri\| > fmm_threshold): para cualquier gen core.
 
-        Devuelve
-        --------
+        Returns
+        -------
         cpca_outs  : eliminados por criterio radial
         fmm_outs   : eliminados solo por criterio FMM
         all_dropped: union ordenada (con tope max_outlier_fraction)
@@ -558,8 +558,8 @@ class CPCA:
         """
         Ajusta FMM en cada gen core con el ordenamiento final.
 
-        Devuelve
-        --------
+        Returns
+        -------
         fmm_fits_final : {gen: FitResult}
         peak_times     : {gen: float}
         """

@@ -64,8 +64,8 @@ class SynchronizationResult:
     """
     Salida combinada de la Etapa 2.
 
-    Atributos
-    ---------
+    Attributes
+    ----------
     sample_order : np.ndarray de int, forma (n_muestras,)
         Indices finales de muestra en la matriz de expresion limpia.
         Equivalente en R: ``basicOrdRefG2[[1]]``  (= ``indSin``).
@@ -173,7 +173,7 @@ class CircularSynchronizer:
     Etapa 2 de CIRCUST: establece el marco de referencia biologico del
     ordenamiento circular.
 
-    Parametros
+    Parameters
     ----------
     mode : str
         Modalidad de sincronizacion. Opciones:
@@ -207,7 +207,7 @@ class CircularSynchronizer:
     verbose : bool
         Imprimir mensajes de progreso.
 
-    Ejemplo
+    Example
     -------
     >>> syncer = CircularSynchronizer()
     >>> result = syncer.run(refined, core_genes)
@@ -245,7 +245,7 @@ class CircularSynchronizer:
         """
         Ejecuta la sincronizacion circular.
 
-        Parametros
+        Parameters
         ----------
         refined : CPCAResult
             Salida de ``CPCA.run()``.
@@ -257,8 +257,8 @@ class CircularSynchronizer:
             Solo necesario para ``mode="hybrid"``. Tiempos de pico de
             referencia in vivo por gen (en [0, 2π)). Ignorado en modo manual.
 
-        Devuelve
-        --------
+        Returns
+        -------
         SynchronizationResult
         """
         self._log("=== Etapa 2: Sincronizacion Circular ===")
@@ -345,7 +345,7 @@ class CircularSynchronizer:
 
         Inspirado en: Ueda et al. (2004) PNAS, Higashi et al. (2016).
 
-        Parametros
+        Parameters
         ----------
         reference_peaks : dict {gen: float}
             Tiempos de pico de referencia in vivo en radianes [0, 2π).
@@ -374,8 +374,8 @@ class CircularSynchronizer:
         """
         Paso 2.1 — Equivalente en R: ``basicPreOder_cores`` (lineas 4192-4263).
 
-        Devuelve
-        --------
+        Returns
+        -------
         o_new       : np.ndarray  — indices de ordenamiento de muestras
         esc_new     : np.ndarray  — escala circular en [0, 2π)
         mat_new     : pd.DataFrame — matriz completa en nuevo orden
@@ -481,8 +481,8 @@ class CircularSynchronizer:
         """
         Paso 2.2 — Equivalente en R: ``basicOder_cores``.
 
-        Devuelve
-        --------
+        Returns
+        -------
         o_new, esc_new, mat_new, peaks_new, pars_new, flipped, ind_new
         """
         anchor_i      = core_genes.index(self.anchor_gene)      if self.anchor_gene      in core_genes else None

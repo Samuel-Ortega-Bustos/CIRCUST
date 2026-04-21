@@ -96,8 +96,8 @@ def plot_pc_scatter(
     show_loose_circle : bool
         Si se deben dibujar ambos círculos umbral aunque solo se usara el ajustado.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
     """
     # Usar proyecciones iniciales (pre-eliminacion de outliers) para
@@ -233,12 +233,12 @@ def plot_gene_panels(
     figsize : tuple, opcional
         Tamaño de la figura. Se calcula automáticamente de las dimensiones de la cuadrícula si no se proporciona.
 
-    Devuelve
-    --------
+    Returns
+    -------
     matplotlib.figure.Figure
 
-    Lanza
-    -----
+    Raises
+    ------
     ValueError
         Si result.core_norm_final es None.
     """

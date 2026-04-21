@@ -48,12 +48,12 @@ def circular_median(angles: np.ndarray) -> float:
     Mediana circular: el angulo theta que minimiza  sum d(theta, theta_i)
     donde d es la distancia geodesica en el circulo unitario.
 
-    Parametros
+    Parameters
     ----------
     angles : array (n,) en [0, 2pi).
 
-    Devuelve
-    --------
+    Returns
+    -------
     float — mediana circular en [0, 2pi).
     """
     angles = np.asarray(angles, dtype=np.float64) % (2.0 * pi)
@@ -87,14 +87,14 @@ def assign_sectors(
 
     Los sectores se numeran 1 ... n_sectors.
 
-    Parametros
+    Parameters
     ----------
     peaks     : array (n,) de angulos en [0, 2pi).
     reference : float — mediana circular usada como origen.
     n_sectors : int — por defecto 8.
 
-    Devuelve
-    --------
+    Returns
+    -------
     array int (n,) — etiquetas de sector en {1, 2, ..., n_sectors}.
     """
     peaks = np.asarray(peaks, dtype=np.float64)
@@ -109,13 +109,13 @@ def sector_boundaries(reference: float, n_sectors: int = 8) -> np.ndarray:
     """
     Devuelve los *n_sectors* puntos centrales de sector.
 
-    Parametros
+    Parameters
     ----------
     reference : float — mediana circular usada como origen.
     n_sectors : int — por defecto 8.
 
-    Devuelve
-    --------
+    Returns
+    -------
     array (n_sectors,) — centros de cada sector en [0, 2pi).
     """
     return np.array([
@@ -288,7 +288,7 @@ class TopGeneSelector:
     6. Forzar inclusion de los genes core si no estan presentes.
     7. Construir la matriz TOP ([X_TOP] en el paper).
 
-    Parametros
+    Parameters
     ----------
     r2_ori_threshold : float
         Umbral minimo de R2 ORI para el pre-filtro no parametrico.
@@ -357,7 +357,7 @@ class TopGeneSelector:
         a cada gen para calcular R2_ORI, aplica los filtros y construye
         el conjunto TOP.
 
-        Parametros
+        Parameters
         ----------
         expr_norm : pd.DataFrame (n_genes, n_muestras)
             Matriz de expresion normalizada completa, ya ordenada
@@ -375,8 +375,8 @@ class TopGeneSelector:
             Indices de muestra del ordenamiento preliminar.
             Si es None se asume identidad.
 
-        Devuelve
-        --------
+        Returns
+        -------
         TopGeneResult
         """
         seed_genes = list(seed_genes)
