@@ -705,9 +705,11 @@ class ORIModel(RhythmModel):
         Devuelve
         --------
         FitResult
-            Claves de ``params``: ``L_opt``, ``U_opt``
-                - L_opt : indice del valle optimo (base 0)
-                - U_opt : indice del pico optimo (base 0)
+            Claves de ``params``: ``L_opt``, ``U_opt``.
+
+            - L_opt : indice del valle optimo (base 0)
+            - U_opt : indice del pico optimo (base 0)
+
             ``peak_time`` = ``time_points[U_opt]``.
             ``r2`` = R2_ORI = 1 - MSE_unimodal / MSE_plano.
         """

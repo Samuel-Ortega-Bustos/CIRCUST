@@ -11,7 +11,7 @@ punto del pipeline donde se toma esa decision.
 
 Conjuntos predefinidos
 ----------------------
-- "larriba"  Larriba et al. 2023  — 12 genes  (defecto de CIRCUST)
+- "circust"  Larriba et al. 2023  — 12 genes  (defecto de CIRCUST)
 - "zhang"    Zhang et al. 2014    — 10 genes
 - "ruben"   Ruben et al. 2018    — 54 genes  (lista pendiente de completar)
 
@@ -24,7 +24,7 @@ Uso tipico
 >>> prep   = Preprocessor().run(matrix)
 >>>
 >>> # Preset por nombre
->>> sel    = CoreGeneSelector(preset="larriba")
+>>> sel    = CoreGeneSelector(preset="circust")
 >>> result = sel.select(prep.expr_norm)
 >>> result.genes          # lista validada
 >>> result.missing        # genes no encontrados en la matriz
@@ -57,7 +57,7 @@ import pandas as pd
 # Listas de genes core predefinidas
 # ---------------------------------------------------------------------------
 
-SEED_GENES_LARRIBA: list[str] = [
+SEED_GENES_CIRCUST: list[str] = [
     "PER1", "PER2", "PER3",
     "CRY1", "CRY2",
     "ARNTL", "CLOCK",
@@ -73,7 +73,7 @@ SEED_GENES_ZHANG: list[str] = [
 # Ruben et al. (2018) — 54 genes. Completar a partir del Excel de la publicacion.
 SEED_GENES_RUBEN: list[str] = []
 
-SEED_GENES_DEFAULT = SEED_GENES_LARRIBA
+SEED_GENES_DEFAULT = SEED_GENES_CIRCUST
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ SEED_GENES_DEFAULT = SEED_GENES_LARRIBA
 # ---------------------------------------------------------------------------
 
 PRESETS: dict[str, list[str]] = {
-    "larriba": SEED_GENES_LARRIBA,
+    "circust": SEED_GENES_CIRCUST,
     "zhang":   SEED_GENES_ZHANG,
     "ruben":   SEED_GENES_RUBEN,
 }
@@ -110,14 +110,14 @@ class CoreGeneResult:
         Puede ser una lista vacia si todos los genes estaban presentes.
 
     preset : str
-        Nombre del preset utilizado (``"larriba"``, ``"zhang"``, ``"ruben"``)
+        Nombre del preset utilizado (``"circust"``, ``"zhang"``, ``"ruben"``)
         o ``"custom"`` si el usuario paso una lista explicita.
     """
 
     genes:            list[str]
     genes_requested:  list[str]
     missing:          list[str]   = field(default_factory=list)
-    preset:           str         = "larriba"
+    preset:           str         = "circust"
 
     def summary(self) -> str:
         lines = [
@@ -142,9 +142,9 @@ class CoreGeneSelector:
     Parametros
     ----------
     preset : str o None
-        Nombre del conjunto predefinido: "larriba", "zhang", "ruben".
+        Nombre del conjunto predefinido: "circust", "zhang", "ruben".
         Se ignora si se pasa custom_genes.
-        Si ambos son None se usa "larriba" por defecto.
+        Si ambos son None se usa "circust" por defecto.
 
     custom_genes : list[str] o None
         Lista explicita de simbolos genicos. Tiene prioridad sobre "preset".
@@ -162,7 +162,7 @@ class CoreGeneSelector:
 
     def __init__(
         self,
-        preset:       str | None       = "larriba",
+        preset:       str | None       = "circust",
         custom_genes: list[str] | None = None,
         verbose:      bool             = True,
     ) -> None:
@@ -180,7 +180,7 @@ class CoreGeneSelector:
             self._preset_name     = preset_lower
         else:
             self._genes_requested = list(SEED_GENES_DEFAULT)
-            self._preset_name     = "larriba"
+            self._preset_name     = "circust"
 
         self.verbose = verbose
 
@@ -246,8 +246,8 @@ class CoreGeneSelector:
         Construye un :class:`CoreGeneSelector` desde un argumento de linea de comandos.
 
         Acepta tres formas:
-        - ``None``           → preset por defecto (``"larriba"``)
-        - ``"larriba"``      → preset con ese nombre
+        - ``None``           → preset por defecto (``"circust"``)
+        - ``"circust"``      → preset con ese nombre
         - ``"PER1,PER2,..."`` → lista separada por comas
 
         Parametros
@@ -268,7 +268,7 @@ class CoreGeneSelector:
             Si la lista personalizada tiene menos de 2 genes.
         """
         if raw is None:
-            return cls(preset="larriba", verbose=verbose)
+            return cls(preset="circust", verbose=verbose)
 
         if raw.lower() in PRESETS:
             return cls(preset=raw.lower(), verbose=verbose)

@@ -193,22 +193,18 @@ class PreprocessingResult:
     """
     Todos los resultados producidos por :class:`Preprocessor`.
 
-    Tener campos con nombre en lugar de una lista posicional (como [[1]], [[3]] de R)
-    hace que cada modulo aguas abajo sea autodocumentado y protege contra
-    usar accidentalmente el valor equivocado.
-
     Atributos
     ---------
     expr_norm : pd.DataFrame
         Matriz de expresion normalizada, genes x muestras, valores en [-1, 1].
-        Es la matriz que consume cada paso aguas abajo (CPCA, FMM).
+        Es la matriz que consume cada paso (CPCA, FMM).
 
     expr_raw : pd.DataFrame
-        Matriz bruta filtrada — despues de eliminar genes malos pero antes
+        Matriz bruta filtrada despues de eliminar genes malos pero antes
         de normalizar. Util para depuracion y validacion.
 
     dropped_sparse : List[str]
-        Simbolos genicos eliminados porque > ZERO_COUNT_THRESHOLD de muestras eran cero o NaN.
+        Simbolos genicos eliminados porque > zero_threshold de muestras eran cero o NaN.
 
     dropped_duplicates : List[str]
         Simbolos genicos eliminados durante la resolucion de duplicados (filas con menor MAD).
@@ -260,8 +256,7 @@ def normalise_matrix(
     """
     Normaliza min-max cada fila de ``mat`` al intervalo [norm_min, norm_max].
 
-    Filas constantes (min == max) se mapean a todos ceros, replicando el
-    comportamiento de ``normalice2()`` de R.
+    Filas constantes (min == max) se mapean a todos ceros.
 
     Parametros
     ----------
@@ -291,8 +286,6 @@ class Preprocessor:
     """
     Limpia y normaliza una matriz de expresion genica bruta.
 
-    Replica los pasos de preprocesamiento de ``giveMatIniNP_v3_cores`` de R:
-
     1. Eliminar genes sin nombre (NA rownames en R)
     2. Eliminar genes sparse (> ``sparse_threshold`` de muestras son cero O NaN)
     3. Resolver nombres de genes duplicados — conservar la fila con mayor MAD
@@ -304,15 +297,14 @@ class Preprocessor:
         Fraccion de muestras que pueden ser cero o NaN antes de que un gen
         se elimine. La comparacion es estricta (>), asi que un gen
         exactamente en el umbral se conserva.
-        Valor R por defecto: 0.30 (linea 3920-3921 de ``giveMatIniNP_v3_cores``).
 
     zero_threshold : float o None
         Override para el umbral solo de ceros. Si None (defecto), usa
-        ``sparse_threshold`` para ceros, replicando el comportamiento de R.
+        ``sparse_threshold`` para ceros.
 
     nan_threshold : float o None
         Override para el umbral solo de NaN. Si None (defecto), usa
-        ``sparse_threshold`` para NaN, replicando el comportamiento de R.
+        ``sparse_threshold`` para NaN.
 
     verbose : bool
         Si True, imprime mensajes de progreso tras cada paso.
@@ -406,10 +398,6 @@ class Preprocessor:
     def _drop_unnamed(self, mat: pd.DataFrame) -> pd.DataFrame:
         """
         Elimina filas cuyo simbolo genico falta o esta efectivamente vacio.
-
-        Replica ``which(is.na(rownames(...)))`` de R (linea 3914) y extiende
-        para capturar casos borde al cargar desde CSV/Excel:
-
         - NaN real en el indice (R: NA rowname)
         - Cadena vacia ``""``
         - Cadena de solo espacios ``"   "``
@@ -457,12 +445,6 @@ class Preprocessor:
         """
         Para cada nombre de gen que aparece mas de una vez, conserva la fila
         con mayor MAD y descarta el resto.
-
-        Nota sobre MAD:
-            R: mad(x, constant=1) = median(|x - median(x)|) SIN factor de
-            correccion de distribucion normal.
-            Python equivalente: median_abs_deviation(x, scale=1)
-            de scipy.stats — el argumento scale=1 es critico.
         """
         # encontrar nombres de genes que aparecen mas de una vez
         duplicated_mask  = mat.index.duplicated(keep=False)

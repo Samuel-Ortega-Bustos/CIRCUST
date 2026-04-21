@@ -42,8 +42,7 @@ rejilla alrededor de la mejor estimacion anterior.
 
 Equivalente en R
 ----------------
-``fitFMM_Par(vData, timePoints, lengthAlphaGrid=48, lengthOmegaGrid=24,
-             omegaMax=1, numReps=3)``
+``fitFMM_Par(vData, timePoints, lengthAlphaGrid=48, lengthOmegaGrid=24, omegaMax=1, numReps=3)``
 
 Devuelve
 --------

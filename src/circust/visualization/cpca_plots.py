@@ -1,6 +1,6 @@
 """
 circust/visualization/cpca_plots.py
-============================
+====================================
 Visualizaciones para la etapa CPCA del pipeline CIRCUST.
 
 Dos gráficos, equivalentes a la salida de obtainCPCA12/13 (printing=TRUE) en R:

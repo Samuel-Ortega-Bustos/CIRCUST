@@ -82,8 +82,9 @@ def plot_pipeline_summary(
     order_result : SynchronizationResult
         Salida de CircularSynchronizer.
     title : str
-        Título global de la figura.
+        Titulo global de la figura.
     figsize : tuple
+        Tamano de la figura en pulgadas (ancho, alto).
 
     Devuelve
     --------
@@ -298,9 +299,11 @@ def plot_variance_explained(
     cpca_result : CPCAResult
         Debe tener ``variance_explained`` con al menos 3 entradas.
     n_components : int
-        Número de CPs a mostrar.
+        Numero de CPs a mostrar.
     title : str
+        Titulo de la figura.
     figsize : tuple
+        Tamano de la figura en pulgadas.
 
     Devuelve
     --------
@@ -391,9 +394,11 @@ def plot_expression_overview(
     circular_scale : np.ndarray
         Eje de tiempo circular para el eje x.
     n_top : int
-        Número de genes top a mostrar (por varianza de fila).
+        Numero de genes top a mostrar (por varianza de fila).
     title : str
+        Titulo de la figura.
     figsize : tuple, opcional
+        Tamano de la figura en pulgadas.
 
     Devuelve
     --------

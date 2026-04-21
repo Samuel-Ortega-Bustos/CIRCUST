@@ -73,8 +73,7 @@ from circust.preprocessing import load_expression_matrix, Preprocessor
 from circust.cpca import CPCA
 from circust.synchronizer import CircularSynchronizer
 from circust.top_genes import TopGeneSelector
-from circust.random_selection import RandomSelector
-from circust.robust_estimation import RobustEstimator
+from circust.robust_order import RobustOrderEstimator
 from circust.core_genes import CoreGeneSelector
 
 # ── Importaciones de visualización ─────────────────────────────────────────
@@ -414,67 +413,55 @@ def main() -> None:
           f"{top_result.candidate_matrix.shape[1]} muestras")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3.5 / 3.6 — Selección aleatoria controlada
+    # Etapa 4 — Estimacion robusta del orden
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3.5 / 3.6: Selección Aleatoria Controlada")
+    _banner("Etapa 4: Estimación Robusta del Orden")
 
-    random_selector = RandomSelector(
+    robust_order = RobustOrderEstimator(
         n_reps=5,
         sample_size_fraction=2.0 / 3.0,
+        method="best_k",
         r2_min=0.5,
         max_attempts=5000,
-        arntl_gene=cfg["anchor_gene"],
-        dbp_gene=cfg["direction_gene"],
+        anchor_gene=cfg["anchor_gene"],
+        direction_gene=cfg["direction_gene"],
+        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid=cfg["fmm_omega_grid"],
+        fmm_num_reps=cfg["fmm_reps"],
+        n_jobs=1,
         seed=42,
         verbose=True,
     )
-    random_result = random_selector.run(
-        reference      = top_result,
+    robust_result = robust_order.run(
+        top_result     = top_result,
         expr_full_norm = order_result.expr_ordered,
+        core_genes     = core_genes_found,
     )
 
-    _save_text(random_result.summary(), results_dir / "random_selection_summary.txt")
+    _save_text(robust_result.summary(), results_dir / "robust_order_summary.txt")
+
+    # Exportar selecciones aleatorias
     sel_df_rows = []
-    for k in range(random_result.selection_indices.shape[0]):
-        for j in range(random_result.selection_indices.shape[1]):
+    for k in range(robust_result.selection_names.shape[0]):
+        for j in range(robust_result.selection_names.shape[1]):
             sel_df_rows.append({
-                "rep":      k + 1,
-                "gene":     random_result.selection_names[k, j],
-                "fmm_peak": random_result.selection_fmm_peaks[k, j],
-                "r2_par":   random_result.selection_r2[k, j],
+                "rep":  k + 1,
+                "gene": robust_result.selection_names[k, j],
             })
     pd.DataFrame(sel_df_rows).to_csv(
         results_dir / "random_selections.csv", index=False
     )
     print(f"    Saved: random_selections.csv")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Etapa 4 — Estimación robusta
-    # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 4: Estimación Robusta")
-
-    robust_est = RobustEstimator(
-        arntl_gene=cfg["anchor_gene"],
-        dbp_gene=cfg["direction_gene"],
-        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
-        fmm_length_omega_grid=cfg["fmm_omega_grid"],
-        fmm_num_reps=cfg["fmm_reps"],
-        verbose=True,
-    )
-    robust_result = robust_est.run(
-        random_selection = random_result,
-        top_matrix       = top_result.candidate_matrix,
-        expr_full_norm   = order_result.expr_ordered,
-        core_genes       = core_genes_found,
-    )
-
-    _save_text(robust_result.summary(), results_dir / "robust_estimation_summary.txt")
+    # Exportar orden final
     pd.DataFrame({
-        "sample_position": np.arange(len(robust_result.consensus_phase)),
-        "consensus_phase": robust_result.consensus_phase,
-    }).to_csv(results_dir / "robust_consensus_phase.csv", index=False)
-    print(f"    Saved: robust_consensus_phase.csv")
+        "sample_position": np.arange(len(robust_result.circular_scale)),
+        "circular_phase":  robust_result.circular_scale,
+        "sample_index":    robust_result.sample_order,
+    }).to_csv(results_dir / "robust_final_order.csv", index=False)
+    print(f"    Saved: robust_final_order.csv")
 
+    # Exportar tabla de estadisticos
     stats_cols = (
         ["fmm_M","fmm_A","fmm_alpha","fmm_beta","fmm_omega",
          "fmm_pkU","fmm_pkL","fmm_pkU_pct","fmm_pkL_pct",
@@ -543,6 +530,7 @@ def main() -> None:
     print(f"  Genes tras ORI     : {top_result.n_after_ori}")
     print(f"  Genes tras FMM     : {top_result.n_after_fmm}")
     print(f"  Genes TOP finales  : {len(top_result.gene_names)}")
+    print(f"  Metodo orden rob.  : {robust_result.method_used}")
     print(f"  Repeticiones K     : {robust_result.sample_orders.shape[0]}")
     print(f"  Flips de orient.   : {int(robust_result.direction_flipped.sum())}")
     print(f"  Salida             : {output_dir.resolve()}")

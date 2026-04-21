@@ -219,7 +219,9 @@ def plot_ordered_profiles(
     result : SynchronizationResult
         Salida de ``CircularSynchronizer.run()``.
     title : str
+        Etiqueta del titulo de la figura.
     figsize : tuple, opcional
+        Tamano de la figura en pulgadas (ancho, alto).
 
     Devuelve
     --------

@@ -12,10 +12,10 @@ Implementa la seleccion de genes TOP segun la Seccion 3 de CIRCUST:
      parametrica insuficiente).
 
   3. Filtro FMM: ajustar el modelo FMM a los supervivientes y
-     seleccionar aquellos que sean:
-       i)   no puntiagudos (omega > 0.1)
-       ii)  altamente ritmicos (R2_FMM > 0.5)
-       iii) picos (t_U) distribuidos en los 4 cuadrantes de [0, 2pi)
+     seleccionar aquellos que sean
+     (i) no puntiagudos (omega > 0.1),
+     (ii) altamente ritmicos (R2_FMM > 0.5),
+     (iii) picos (t_U) distribuidos en los 4 cuadrantes de [0, 2pi).
 
   4. Genes semilla forzados: los 12 genes reloj centrales se
      incluyen siempre; si alguno no paso los filtros, se fuerza su

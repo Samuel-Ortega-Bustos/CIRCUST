@@ -1,4 +1,4 @@
-"""
+r"""
 circust/visualization/outlier_plots.py
 ======================================
 Visualizaciones para la etapa de refinamiento de outliers (Etapa 1.2).
@@ -18,7 +18,7 @@ Tres tipos de gráficos:
       Equivalente en R: ``resOutPar_*.png``.
 
   plot_residual_heatmap(result)
-      Mapa de calor de |residuos FMM estandarizados| a través de
+      Mapa de calor de \|residuos FMM estandarizados\| a través de
       genes × muestras, con cortes de color en los dos umbrales de
       outliers.  Proporciona una vista global de qué muestras son
       problemáticas en los distintos genes.
@@ -183,12 +183,12 @@ def plot_residual_strips(
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
-    """
+    r"""
     Diagrama de tiras horizontal de residuos FMM estandarizados por gen.
 
     Cada fila es un gen core (+ eigengenes). Las muestras individuales se
-    grafican como puntos; las que superan el umbral multivariante (|3|)
-    o el umbral univariante (|4|) se codifican por color. Líneas verticales
+    grafican como puntos; las que superan el umbral multivariante (\|3\|)
+    o el umbral univariante (\|4\|) se codifican por color. Lineas verticales
     discontinuas marcan los umbrales.
 
     Propósito: identificar visualmente qué muestras impulsan la detección
@@ -279,13 +279,14 @@ def plot_residual_heatmap(
     title: str = "",
     figsize: Optional[tuple[float, float]] = None,
 ) -> Figure:
-    """
-    Mapa de calor de |residuos FMM estandarizados| (genes × muestras ordenadas).
+    r"""
+    Mapa de calor de \|residuos FMM estandarizados\| (genes x muestras ordenadas).
 
     La escala de color usa tres regiones:
-      - |res| < 3  : blanco → azul claro  (normal)
-      - 3 ≤ |res| < 4 : amarillo → naranja  (señal multivariante)
-      - |res| ≥ 4  : rojo → rojo oscuro      (señal univariante)
+
+    - \|res\| < 3: blanco a azul claro (normal)
+    - 3 <= \|res\| < 4: amarillo a naranja (senal multivariante)
+    - \|res\| >= 4: rojo a rojo oscuro (senal univariante)
 
     Propósito: vista global de patrones de residuos — útil para detectar
     problemas a nivel de muestra (bandas verticales) o de gen (filas).

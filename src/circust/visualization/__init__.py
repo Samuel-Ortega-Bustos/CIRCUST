@@ -10,8 +10,8 @@ outlier_plots     — Refinamiento de outliers: ajustes genicos, strips de resid
 order_plots       — Ordenamiento preliminar: picos circulares, perfiles, barras R²
 pipeline_summary  — Resumen compuesto, scree plot, heatmap de expresion
 
-Referencia rapida
-------------------
+Referencia rapida::
+
     from circust.visualization import (
         # CPCA (Etapa 1.1)
         plot_pc_scatter,

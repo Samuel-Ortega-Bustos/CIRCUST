@@ -1,4 +1,4 @@
-"""
+r"""
 circust/cpca.py
 ===============
 Etapas 1.1 + 1.2: Ordenamiento circular (CPCA) y deteccion de outliers.
@@ -21,7 +21,7 @@ Dos criterios en logica OR — una muestra se elimina si viola cualquiera:
        Muestras con distancia al origen en espacio PC1-PC2 muy pequena
        disrumpen la estructura circular y reflejan desalineaciones individuales.
 
-    2. Residuos FMM: |ri| > fmm_threshold (3.0)  para cualquier gen core
+    2. Residuos FMM: \|ri\| > fmm_threshold (3.0)  para cualquier gen core
        Detecta errores de medicion u otras anomalias comunes entre genes.
 
 Si se detectan outliers, se eliminan, se renormaliza la matriz core y se
@@ -52,7 +52,7 @@ from circust.preprocessing import normalise_matrix
 
 @dataclass
 class CPCAResult:
-    """
+    r"""
     Salida de :class:`CPCA` — incluye el ordenamiento circular final y la
     deteccion de outliers (Etapas 1.1 + 1.2 del pipeline).
 
@@ -95,7 +95,7 @@ class CPCAResult:
 
     fmm_outliers : list[int]
         Subconjunto de samples_dropped detectados exclusivamente por
-        el criterio de residuos FMM (|ri| > fmm_threshold).
+        el criterio de residuos FMM (\|ri\| > fmm_threshold).
 
     Campos de diagnostico (para visualizacion)
     ------------------------------------------
@@ -159,7 +159,7 @@ class CPCAResult:
 # ===========================================================================
 
 class CPCA:
-    """
+    r"""
     Etapas 1.1 y 1.2: ordenamiento circular de muestras y deteccion de
     outliers residuales, segun la Seccion 3.3 del suplementario de CIRCUST.
 
@@ -183,7 +183,7 @@ class CPCA:
     Parametros — deteccion de outliers FMM
     ---------------------------------------
     fmm_threshold : float
-        Umbral de residuo FMM estandarizado. Muestras con |ri| > fmm_threshold
+        Umbral de residuo FMM estandarizado. Muestras con \|ri\| > fmm_threshold
         en cualquier gen core se declaran outliers. Por defecto: 3.0.
 
     max_outlier_fraction : float
@@ -487,11 +487,11 @@ class CPCA:
         std_res_df:    pd.DataFrame,
         genes_found:   list[str],
     ) -> tuple[list[int], list[int], list[int]]:
-        """
+        r"""
         Aplica criterios de outlier en logica OR (Sec. 3.3 suplementario):
 
           1. CPCA radial (LEi < tight_radius): ya en outlier_idx.
-          2. FMM residuos (|ri| > fmm_threshold): para cualquier gen core.
+          2. FMM residuos (\|ri\| > fmm_threshold): para cualquier gen core.
 
         Devuelve
         --------
