@@ -17,6 +17,7 @@ PER1, PER2, PER3, TEF.
 .. note::
     Existen otros conjuntos disponibles como el de Zhang et al. 2014 que recoge los siguientes:
     ARNTL, DBP, NR1D1, NR1D2, PER1, PER2, PER3, USP2, TSC22D3, TSPAN4
+    Ademas de en un futuro tener un modelo de seleccion automatica
 
 
 Ejemplo de uso

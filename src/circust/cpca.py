@@ -3,19 +3,23 @@ circust/cpca.py
 ===============
 Etapas 1.1 + 1.2: Ordenamiento circular (CPCA) y deteccion de outliers.
 
-Que es CPCA?
+Que es CPCA
 ------------
-PCA sobre los 12 genes core del reloj. Los loadings de PC1 y PC2 de cada
-muestra se tratan como coordenadas (x, y) en el plano; el angulo:
+PCA sobre los 12(o mas) genes core del reloj. Los loadings de PC1 y PC2 de cada
+muestra se tratan como coordenadas (x, y) en el plano, el angulo(phi) se obtiene:
 
     phi = atan2(PC2, PC1)   en [0, 2pi)
 
-da un *ordenamiento circular* que refleja el ritmo circadiano subyacente.
-Muestras cercanas al origen tienen norma pequena y son outliers potenciales.
+Y su norma(LEi):
 
-Deteccion de outliers (Seccion 3.3 del suplementario de CIRCUST)
+    norm12 = sqrt(PC1² + PC2²)
+
+da un *ordenamiento circular* que refleja el ritmo circadiano subyacente.
+Muestras cercanas al origen tienen norma pequena y son potenciales outliers.
+
+Deteccion de outliers (Seccion 3.3 del paper suplementario de CIRCUST)
 -----------------------------------------------------------------
-Dos criterios en logica OR — una muestra se elimina si viola cualquiera:
+Dos criterios en logica OR una muestra se elimina si viola cualquiera:
 
     1. Radial CPCA:  LEi < tight_radius (0.10)
        Muestras con distancia al origen en espacio PC1-PC2 muy pequena
@@ -60,11 +64,9 @@ class CPCAResult:
     ---------------------------------------------------
     sample_order : np.ndarray de int, forma (n_muestras,)
         Indices que ordenan las muestras por fase circular final.
-        Equivalente en R: ``orderCPCA8`` (final, tras eliminar outliers).
 
     circular_scale : np.ndarray de float, forma (n_muestras,)
         Valores de phi ordenados en [0, 2pi). Eje temporal para ajustes.
-        Equivalente en R: ``escalaPhi8`` (final).
 
     core_genes_found : list[str]
         Genes centrales presentes en la matriz y usados para CPCA.
@@ -75,23 +77,18 @@ class CPCAResult:
     expr_norm_final : pd.DataFrame, forma (n_genes, n_muestras_limpias)
         Matriz de expresion completa con muestras outlier eliminadas,
         reordenada por fase circular y renormalizada.
-        Equivalente en R: ``mFullTissueNorm`` (linea 4099).
 
     core_norm_final : pd.DataFrame, forma (n_genes_core, n_muestras_limpias)
         Submatriz core normalizada, sin outliers, ordenada por fase.
-        Equivalente en R: ``mTissueCoreGNorm`` (linea 4085).
 
     fmm_fits_final : dict[str, FitResult]
         Ajustes FMM sobre genes core usando el ordenamiento final.
-        Equivalente en R: ``allParAfter`` (lineas 4109-4136).
 
     fmm_peak_times_final : dict[str, float]
         Tiempos de pico FMM (via compUU) para cada gen core (final).
-        Equivalente en R: ``phisFMMAfter`` (linea 4118).
 
     samples_dropped : list[int]
         Indices originales de columna de las muestras eliminadas.
-        Equivalente en R: ``dropTissueOut`` (linea 4083).
 
     fmm_outliers : list[int]
         Subconjunto de samples_dropped detectados exclusivamente por
@@ -104,15 +101,12 @@ class CPCAResult:
 
     std_residuals_fmm : pd.DataFrame o None
         Residuos FMM estandarizados (genes+PCs x muestras, orden inicial).
-        Equivalente en R: ``resParStTissue``.
 
     fmm_fits_initial : dict[str, FitResult]
         Ajustes FMM sobre genes core + PC1/PC2/PC3 en orden CPCA inicial.
-        Equivalente en R: ``fitParCore``.
 
     cosinor_fits_initial : dict[str, FitResult]
         Ajustes Cosinor sobre genes core + PC1/PC2/PC3 en orden inicial.
-        Equivalente en R: ``fitCosCore``.
     """
 
     # ── Pipeline ─────────────────────────────────────────────────────────
