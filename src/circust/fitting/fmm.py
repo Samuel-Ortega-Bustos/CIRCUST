@@ -1,7 +1,7 @@
 """
 circust/fitting/fmm.py
 =======================
-Modelo Flexible Multivariante (FMM) — ajuste ritmico de un solo componente.
+Frecuency Modulated Mobius (FMM) — ajuste ritmico de un solo componente.
 
 Modelo matematico
 -----------------
@@ -24,11 +24,10 @@ omega             — asimetria en (0, omegaMax]
 
 Algoritmo de estimacion
 -----------------------
-Port exacto de ``fitFMM_Par()`` de ``FMM.R``.
 
 Paso 1 — Busqueda en rejilla
     Para cada combinacion (alpha, omega) en una rejilla, se fijan esos dos
-    parametros y se estiman M, A, beta por OLS Cosinor sobre el eje temporal
+    parametros y se estiman M, A, beta por OLS sobre el eje temporal
     transformado por Mobius. Se selecciona el candidato con menor RSS que
     tambien satisfaga las restricciones de estabilidad de amplitud.
 
@@ -39,10 +38,6 @@ Paso 2 — Refinamiento Nelder-Mead
 
 Los Pasos 1+2 se repiten ``num_reps`` veces, cada vez estrechando la
 rejilla alrededor de la mejor estimacion anterior.
-
-Equivalente en R
-----------------
-``fitFMM_Par(vData, timePoints, lengthAlphaGrid=48, lengthOmegaGrid=24, omegaMax=1, numReps=3)``
 
 Devuelve
 --------
@@ -143,7 +138,6 @@ def _mobius(t: np.ndarray, alpha: float, omega: float) -> np.ndarray:
     """Transformacion de Mobius del eje temporal.
 
     Phi(t) = 2*atan(omega*tan((t - alpha)/2))
-    Equivalente en R: ``parteMobius`` en ``step1FMM``.
     """
     return 2.0 * np.arctan(omega * np.tan((t - alpha) / 2.0))
 
@@ -408,7 +402,6 @@ def _best_step1(
     Selecciona el candidato de la rejilla con menor RSS que satisfaga
     las restricciones de estabilidad de amplitud.
 
-    Equivalente en R: ``bestStep1()``.
     Estabilidad: M+A <= max(datos) + 10% rango  Y  M-A >= min(datos) - 10% rango.
     """
     order    = np.argsort(grid_results[:, 5])   # ordenar por RSS
@@ -435,7 +428,7 @@ def _make_step2_objective(
     Construye la funcion objetivo para Nelder-Mead con limites precalculados.
 
     Evita recalcular min/max/margen en cada evaluacion (se llama miles de
-    veces por ajuste). Equivalente en R: ``step2FMM()``.
+    veces por ajuste).
 
     Si Numba esta disponible, la funcion objetivo es un wrapper delgado
     sobre un nucleo JIT-compilado. Si no, cae en la implementacion pura
@@ -476,7 +469,7 @@ def _make_step2_objective(
 
 class FMMModel(RhythmModel):
     """
-    Ajustador ritmico FMM (Flexible Multivariate Model) de un solo componente.
+    Ajustador ritmico FMM (Frecuency Modulated Mobius).
 
     Ajusta  y(t) = M + A*cos(beta + 2*atan(omega*tan((t - alpha)/2)))
     usando un algoritmo de dos pasos: busqueda en rejilla + Nelder-Mead.
@@ -526,7 +519,6 @@ class FMMModel(RhythmModel):
 
             t_U = alpha + 2*atan2((1/omega)*sin(-beta/2), cos(-beta/2))  mod 2*pi
 
-        Equivalente en R: ``compUU(al, be, om)`` (linea 79 de functionGTEX_cores.R).
         """
         return float(
             (alpha + 2.0 * np.arctan2(
@@ -655,7 +647,6 @@ class FMMModel(RhythmModel):
     ) -> np.ndarray:
         """
         Estrecha la rejilla de alpha alrededor de ``centre``.
-        Equivalente en R: estrechamiento de la rejilla alpha en el bucle numReps.
         """
         amplitude = 1.5 * np.mean(np.diff(np.sort(prev_grid)))
         new_grid  = np.linspace(
@@ -672,7 +663,6 @@ class FMMModel(RhythmModel):
     ) -> np.ndarray:
         """
         Estrecha la rejilla de omega alrededor de ``centre``.
-        Equivalente en R: estrechamiento de la rejilla omega en el bucle numReps.
         """
         amplitude = 1.5 * np.mean(np.diff(np.sort(prev_grid)))
         new_grid  = np.linspace(
