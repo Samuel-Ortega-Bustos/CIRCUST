@@ -30,4 +30,5 @@ Homepage = "https://github.com/Samuel-Ortega-Bustos/CIRCUST"
 Repository = "https://github.com/Samuel-Ortega-Bustos/CIRCUST.git"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["circust*"]

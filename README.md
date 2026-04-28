@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![DOI](https://img.shields.io/badge/DOI-10.1371%2Fjournal.pcbi.1011510-blue)](https://doi.org/10.1371/journal.pcbi.1011510)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue?logo=github)](https://samuel-ortega-bustos.github.io/CIRCUST/)
 
 **Autores de la metodología original (R):** Yolanda Larriba, Ivy C. Mason, Richa Saxena, Frank A.J.L. Scheer, Cristina Rueda  
 **Implementación en Python:** Samuel Ortega Bustos (TFG supervisado por Yolanda Larriba)

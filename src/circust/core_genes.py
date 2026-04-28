@@ -1,0 +1,295 @@
+"""
+circust/core_genes.py
+=====================
+Modulo de seleccion de genes core (reloj circadiano) para el pipeline CIRCUST.
+
+Responsabilidad
+---------------
+Este modulo resuelve que genes core se usan en la ejecucion y valida
+que esos genes esten presentes en la matriz de expresion. Es el unico
+punto del pipeline donde se toma esa decision.
+
+Conjuntos predefinidos
+----------------------
+- "circust"  Larriba et al. 2023  — 12 genes  (defecto de CIRCUST)
+- "zhang"    Zhang et al. 2014    — 10 genes
+- "ruben"   Ruben et al. 2018    — 54 genes  (lista pendiente de completar)
+
+Uso tipico
+----------
+>>> from circust.core_genes import CoreGeneSelector
+>>> from circust.preprocessing import Preprocessor, load_expression_matrix
+>>>
+>>> matrix = load_expression_matrix("data/raw/gtex_brain.csv")
+>>> prep   = Preprocessor().run(matrix)
+>>>
+>>> # Preset por nombre
+>>> sel    = CoreGeneSelector(preset="circust")
+>>> result = sel.select(prep.expr_norm)
+>>> result.genes          # lista validada
+>>> result.missing        # genes no encontrados en la matriz
+>>>
+>>> # Lista personalizada
+>>> sel    = CoreGeneSelector(custom_genes=["ARNTL", "DBP", "PER1", "PER2"])
+>>> result = sel.select(prep.expr_norm)
+
+
+Posicion en el pipeline
+-----------------------
+    Preprocessor  ->  **CoreGeneSelector**  ->  CPCA  ->  ...
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Listas de genes core predefinidas
+# ---------------------------------------------------------------------------
+
+SEED_GENES_CIRCUST: list[str] = [
+    "PER1", "PER2", "PER3",
+    "CRY1", "CRY2",
+    "ARNTL", "CLOCK",
+    "NR1D1", "RORA",
+    "DBP", "TEF", "STAT3",
+]
+
+SEED_GENES_ZHANG: list[str] = [
+    "ARNTL", "DBP", "NR1D1", "NR1D2", "PER1", "PER2", "PER3",
+    "USP2", "TSC22D3", "TSPAN4",
+]
+
+# Ruben et al. (2018) — 54 genes. Completar a partir del Excel de la publicacion.
+SEED_GENES_RUBEN: list[str] = []
+
+SEED_GENES_DEFAULT = SEED_GENES_CIRCUST
+
+
+# ---------------------------------------------------------------------------
+# Conjuntos predefinidos
+# ---------------------------------------------------------------------------
+
+PRESETS: dict[str, list[str]] = {
+    "circust": SEED_GENES_CIRCUST,
+    "zhang":   SEED_GENES_ZHANG,
+    "ruben":   SEED_GENES_RUBEN,
+}
+
+
+# ---------------------------------------------------------------------------
+# Contenedor de resultados
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CoreGeneResult:
+    """
+    Resultado de la seleccion de genes core.
+
+    Attributes
+    ----------
+    genes : list[str]
+        Genes seleccionados y validados (presentes en la matriz de expresion).
+        Es el valor que consume CPCA y el resto del pipeline.
+
+    genes_requested : list[str]
+        Genes solicitados originalmente, antes de validar contra la matriz.
+
+    missing : list[str]
+        Genes solicitados que no se encontraron en la matriz de expresion.
+        Puede ser una lista vacia si todos los genes estaban presentes.
+
+    preset : str
+        Nombre del preset utilizado (``"circust"``, ``"zhang"``, ``"ruben"``)
+        o ``"custom"`` si el usuario paso una lista explicita.
+    """
+
+    genes:            list[str]
+    genes_requested:  list[str]
+    missing:          list[str]   = field(default_factory=list)
+    preset:           str         = "circust"
+
+    def summary(self) -> str:
+        lines = [
+            "=== Seleccion de Genes Core ===",
+            f"  Preset           : {self.preset}",
+            f"  Solicitados      : {len(self.genes_requested)}",
+            f"  Encontrados      : {len(self.genes)}  {self.genes}",
+        ]
+        if self.missing:
+            lines.append(f"  No encontrados   : {self.missing}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Selector
+# ---------------------------------------------------------------------------
+
+class CoreGeneSelector:
+    """
+    Selecciona y valida los genes core del reloj circadiano.
+
+    Parameters
+    ----------
+    preset : str o None
+        Nombre del conjunto predefinido: "circust", "zhang", "ruben".
+        Se ignora si se pasa custom_genes.
+        Si ambos son None se usa **"circust"** por defecto.
+
+    custom_genes : list[str] o None
+        Lista explicita de simbolos genicos. Tiene prioridad sobre "preset".
+
+    verbose : bool
+        Si True, imprime el resumen de seleccion al llamar a :meth:`select`.
+
+    Raises
+    ------
+    ValueError
+        Si preset no es un nombre reconocido y no se paso custom_genes.
+    """
+
+    PRESETS = PRESETS
+
+    def __init__(
+        self,
+        preset:       str | None       = "circust",
+        custom_genes: list[str] | None = None,
+        verbose:      bool             = True,
+    ) -> None:
+        if custom_genes is not None:
+            self._genes_requested = list(custom_genes)
+            self._preset_name     = "custom"
+        elif preset is not None:
+            preset_lower = preset.lower()
+            if preset_lower not in self.PRESETS:
+                raise ValueError(
+                    f"Preset '{preset}' desconocido. "
+                    f"Opciones disponibles: {list(self.PRESETS)}"
+                )
+            self._genes_requested = list(self.PRESETS[preset_lower])
+            self._preset_name     = preset_lower
+        else:
+            self._genes_requested = list(SEED_GENES_DEFAULT)
+            self._preset_name     = "circust"
+
+        self.verbose = verbose
+
+    # ------------------------------------------------------------------
+    # API publica
+    # ------------------------------------------------------------------
+
+    def select(self, expr_norm: pd.DataFrame) -> CoreGeneResult:
+        """
+        Valida los genes solicitados contra la matriz de expresion.
+
+        Parameters
+        ----------
+        expr_norm : pd.DataFrame
+            Matriz de expresion normalizada, genes x muestras.
+            Tipicamente PreprocessingResult.expr_norm.
+
+        Returns
+        -------
+        CoreGeneResult
+            result.genes contiene la lista validada lista para CPCA.
+
+        Raises
+        ------
+        ValueError
+            Si ningun gen solicitado esta presente en la matriz.
+        """
+        genes_in_matrix = set(expr_norm.index)
+        found   = [g for g in self._genes_requested if g in genes_in_matrix]
+        missing = [g for g in self._genes_requested if g not in genes_in_matrix]
+
+        if not found:
+            raise ValueError(
+                f"Ningun gen core encontrado en la matriz de expresion.\n"
+                f"Solicitados : {self._genes_requested}\n"
+                f"Comprueba que los nombres coinciden con el indice de la "
+                f"matriz (mayusculas/minusculas incluidas)."
+            )
+
+        result = CoreGeneResult(
+            genes           = found,
+            genes_requested = self._genes_requested,
+            missing         = missing,
+            preset          = self._preset_name,
+        )
+
+        if self.verbose:
+            print(result.summary())
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Metodo de clase para construir desde un string de CLI
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_string(
+        cls,
+        raw:     str | None,
+        verbose: bool = True,
+    ) -> "CoreGeneSelector":
+        """
+        Construye un :class:`CoreGeneSelector` desde un argumento de linea de comandos.
+
+        Acepta tres formas:
+        - ``None``           → preset por defecto (``"circust"``)
+        - ``"circust"``      → preset con ese nombre
+        - ``"PER1,PER2,..."`` → lista separada por comas
+
+        Parameters
+        ----------
+        raw : str o None
+            Valor del argumento ``--core-genes`` de la CLI.
+
+        verbose : bool
+            Propagado al constructor.
+
+        Returns
+        -------
+        CoreGeneSelector
+
+        Raises
+        ------
+        ValueError
+            Si la lista personalizada tiene menos de 2 genes.
+        """
+        if raw is None:
+            return cls(preset="circust", verbose=verbose)
+
+        if raw.lower() in PRESETS:
+            return cls(preset=raw.lower(), verbose=verbose)
+
+        # Lista separada por comas
+        genes = [g.strip() for g in raw.split(",") if g.strip()]
+        if len(genes) < 2:
+            raise ValueError(
+                f"--core-genes: se necesitan al menos 2 genes, se recibio: {genes}"
+            )
+        return cls(custom_genes=genes, verbose=verbose)
+
+    # ------------------------------------------------------------------
+    # Punto de extension para seleccion automatica futura
+    # ------------------------------------------------------------------
+
+    def _auto_select(self, expr_norm: pd.DataFrame) -> list[str]:
+        """
+        Punto de extension para seleccion automatica de genes core.
+
+        Subclasificar :class:`CoreGeneSelector` y sobrescribir este metodo
+        para implementar seleccion basada en datos (p.ej. criterios de
+        ritmicidad, correlacion con el reloj circadiano, etc.).
+
+        Raises
+        ------
+        NotImplementedError
+            Siempre, hasta que se implemente en una subclase.
+        """
+        raise NotImplementedError(
+            "Seleccion automatica de genes core no implementada todavia. "
+            "Subclasifica CoreGeneSelector y sobrescribe _auto_select()."
+        )

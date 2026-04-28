@@ -151,10 +151,11 @@ Entre los enfoques analíticos recientes destaca el algoritmo CIRCUST \cite{larr
     \item \textbf{Análisis de Componentes Principales Circulares (CPCA):} En un primer paso, CIRCUST selecciona un subconjunto de ``genes reloj'' centrales y aplica técnicas de reducción de dimensionalidad basadas en CPCA\cite{scholz2007}. Al extraer los dos primeros componentes principales, el algoritmo proyecta las muestras sobre el plano bidimensional delimitado por el círculo unidad. Esto proporciona un orden circular preliminar relativo entre todas las muestras.
 
 
-    \item \textbf{Aplicación del Modelo FMM:} Una vez establecido el orden circular preliminar de las muestras, CIRCUST emplea el modelo FMM (\textit{Frequency Modulated Möbius})\cite{fmmAlgorithm}. A diferencia de los modelos armónicos clásicos (como las curvas cosenoidales simples), el FMM es un modelo paramétrico no lineal altamente flexible. Esta flexibilidad le permite ajustarse a curvas de expresión génica asimétricas y con formas de onda complejas, logrando una estimación robusta y biológicamente mucho más realista de los componentes oscilatorios.
+    \item \textbf{Aplicación del Modelo FMM:} Una vez establecido el orden circular preliminar de las muestras, CIRCUST modela las curvas de expresión génica. Históricamente, este paso se ha abordado mediante modelos armónicos clásicos como el \textbf{Cosinor} \cite{cosinor}. Sin embargo, el Cosinor resulta demasiado rígido para capturar los patrones de expresión asimétricos típicos del transcriptoma, y su extensión multicomponente tiende a generar un grave sobreajuste (\textit{overfitting}). Por otro lado, enfoques no paramétricos como \textbf{ORI} (\textit{Order Restricted Inference}) \cite{larribaORI} ofrecen flexibilidad al modelar oscilaciones mediante restricciones de desigualdad, pero carecen de parámetros matemáticos directos que faciliten la comparación analítica entre distintos ritmos.
+    Para superar ambas limitaciones, CIRCUST emplea el modelo \textbf{FMM} (\textit{Frequency Modulated Möbius}) \cite{fmmAlgorithm}. Este modelo paramétrico no lineal de cinco parámetros permite deformar la onda cosenoidal clásica para ajustarse a expresiones asimétricas y complejas. Con ello se logra una estimación robusta, biológicamente realista y cuyos parámetros conservan una interpretación directa sobre la fase oscilatoria del reloj biológico.
 \end{enumerate}
 
-\subsection{Alternativas Computacionales: CYCLOPS, Aprendizaje Profundo, PENN y CHIRAL}
+\subsection{Alternativas Computacionales}
 En paralelo a los métodos fundamentados en la estadística clásica, han ganado gran tracción las aproximaciones basadas en \textit{Machine Learning}, destacando particularmente el algoritmo \textbf{CYCLOPS} (\textit{CYclic Ordering by Periodic Structure})\cite{CYCLOPS} y su evolución, CYCLOPS 2.0\cite{CYCLOPS2}.
 
 CYCLOPS representa un cambio de paradigma al delegar la reducción de dimensionalidad en redes neuronales artificiales, específicamente mediante el uso de \textit{autoencoders}. Sus características principales incluyen:
@@ -178,27 +179,43 @@ El campo de la inferencia de fase circadiana es sumamente dinámico. Más allá 
     \item \textbf{CHIRAL:} Es un algoritmo matemático diseñado específicamente para abordar el desafío de los conjuntos de datos transcriptómicos multi-tejido (como datos del consorcio GTEx). En lugar de tratar todos los tejidos como un solo bloque, CHIRAL \cite{chiral2020} opera jerárquicamente. Primero, estima una Fase Interna del Tejido (TIP, por sus siglas en inglés) independiente para cada órgano utilizando genes reloj específicos. Posteriormente, integra las fases de todos los tejidos pertenecientes a un mismo individuo post-mortem para inferir una Fase Interna del Donante (DIP) global y consolidada. Este enfoque permite separar la variabilidad entre tejidos de la fase circadiana sistémica del individuo, mejorando la coherencia temporal en estudios transcriptómicos a gran escala.
 \end{itemize}
 Si bien enfoques como CYCLOPS ofrecen una gran capacidad para modelar relaciones no lineales en datos complejos, la naturaleza opaca de las redes neuronales dificulta la interpretabilidad rigurosa de los resultados. En este contexto, la reimplementación y mejora de métodos transparentes basados en componentes principales, como CIRCUST, resulta especialmente valiosa.
-En particular, la incorporación de mecanismos de corrección de covariables mediante regresión lineal permitiría integrar la interpretabilidad propia de la estadística clásica con la robustez necesaria para abordar conjuntos de datos biológicos heterogéneos, acercando el rendimiento de estos enfoques al de los modelos de aprendizaje profundo.
 \section{Limitaciones Existentes y Motivación del Trabajo}
-A pesar de la validez teórica de métodos basados en CPCA como CIRCUST, su aplicación práctica en estudios transcriptómicos a gran escala se ve obstaculizada por importantes limitaciones de software y estadístico-matemáticas que este Trabajo de Fin de Grado pretende resolver:
+
+Para comprender la necesidad de optimizar las herramientas algorítmicas en cronobiología, es imprescindible analizar primero las severas restricciones del entorno de datos en el que operan estos modelos, así como las debilidades metodológicas presentes en el estado de los modelos actuales.
+
+\subsection{El Cuello de Botella de los Datos: La Dependencia de GTEx}
+El mayor obstáculo en el estudio de los ritmos circadianos humanos a nivel transcriptómico es la recolección de muestras. Obtener series temporales en vivo de órganos internos (como el cerebro, el corazón o el hígado) mediante biopsias repetidas a lo largo de 24 horas es ética, clínica y logísticamente inviable debido a los altos riesgos para el paciente. 
+
+Como consecuencia, la investigación moderna depende de donaciones de tejido post-mortem. En este contexto, el proyecto \textbf{GTEx (\textit{Genotype-Tissue Expression})} \cite{gtex2020} se ha consolidado como la base de datos de referencia mundial, proporcionando un atlas masivo de expresión génica en múltiples tejidos humanos. Sin embargo, el uso de cohortes post-mortem como GTEx introduce un nivel de ruido estadístico extremo: cada donante aporta una única muestra por tejido (un solo punto en el tiempo), la hora exacta de la muerte (\textit{time of death}) suele ser imprecisa, y existen variables de confusión inevitables como el tiempo de isquemia\footnote{En transcriptómica post-mortem, el tiempo de isquemia se refiere al intervalo transcurrido desde la interrupción del flujo sanguíneo (fallecimiento) hasta la estabilización o congelación de la muestra. Durante este periodo, la degradación del ARN y la respuesta celular a la hipoxia alteran significativamente los perfiles de expresión génica, introduciendo sesgos severos en el análisis.}, la causa de la muerte o el tiempo transcurrido hasta la preservación del tejido. Inferir un reloj circadiano continuo a partir de estas ``fotografías aisladas'' es el verdadero reto.
+
+\subsection{Limitaciones en las Alternativas Computacionales}
+Aunque metodologías avanzadas como CYCLOPS, PENN o CHIRAL han intentado resolver este rompecabezas, todas presentan compromisos algorítmicos (\textit{trade-offs}) que limitan su aplicabilidad universal:
+
+\begin{itemize}
+    \item \textbf{Opacidad y Dependencia de Datos (CYCLOPS y PENN):} Al basarse en arquitecturas de redes neuronales profundas (\textit{Deep Learning}), estos métodos actúan como ``cajas negras''. Aunque la codificación \textit{multi-hot} de CYCLOPS 2.0 y la función de coste híbrida de PENN son matemáticamente sofisticadas, carecen de una trazabilidad estadística estricta. Además, las redes neuronales son propensas al sobreajuste (\textit{overfitting}) cuando se enfrentan a conjuntos de datos con un número de muestras reducido (un problema crónico en transcriptómica), requiriendo un ajuste intensivo de hiperparámetros.
+    \item \textbf{Suposiciones Estructurales Rígidas (CHIRAL):} Métodos como CHIRAL fueron diseñados ad-hoc para infraestructuras multi-tejido masivas como GTEx. Su efectividad disminuye significativamente cuando se aplican a estudios clínicos más pequeños o de un solo tejido, al depender de la jerarquía estadística entre los diferentes órganos del mismo donante para estabilizar su inferencia.
+\end{itemize}
+
+\subsection{Limitaciones Específicas de CIRCUST}
+Frente a los modelos de caja negra, CIRCUST \cite{larriba2023} ofrece una solución basada en estadística clásica (CPCA y modelo FMM) que garantiza interpretabilidad geométrica y biológica. No obstante, la implementación actual del algoritmo presenta debilidades críticas, tanto teóricas como de ingeniería de software, que restringen su adopción clínica:
 
 \begin{enumerate}
-    \item \textbf{Falta de Modularidad y Extensibilidad:} La implementación actual de muchos de estos algoritmos (frecuentemente desarrollados como scripts monolíticos en R) carece de una arquitectura de software moderna. Esto dificulta enormemente la integración del algoritmo en pipelines de bioinformática más amplios, la reutilización de código y la experimentación eficiente.
-
-    \item \textbf{Susceptibilidad a Covariables (Confounding Factors):} En estudios humanos reales, la expresión génica está altamente influenciada por variables no circadianas (covariables), como la edad, el sexo, el estado patológico o efectos técnicos de lote (batch effects). Actualmente, CIRCUST no dispone de un marco estadístico integrado para ajustar los Componentes Principales Circulares (CPCs) respecto a estas covariables, lo que puede introducir sesgos severos en la estimación de la fase.
-
-    \item \textbf{Muestreo Disperso (Sparse Sampling):} Los algoritmos actuales sufren pérdidas de precisión cuando la distribución de las muestras a lo largo del ciclo de 24 horas no es uniforme. Bajo condiciones de escasez de datos en ciertas franjas horarias, la inferencia del orden circular se vuelve inestable.
+    \item \textbf{Vulnerabilidad ante Factores de Confusión (Covariables):} Esta es la limitación estadística más grave. La formulación matemática original de CIRCUST asume que toda la varianza cíclica capturada en los dos primeros Componentes Principales se debe exclusivamente a la señal del reloj biológico. El algoritmo no posee un mecanismo interno para filtrar el ruido introducido por efectos de lote (\textit{batch effects}), el sexo, la edad o patologías subyacentes. Si no se corrigen estos sesgos antes de proyectar las muestras en el círculo unitario, la inferencia de la fase resultará geométricamente deformada.
+    \item \textbf{Inestabilidad frente al Muestreo Disperso (\textit{Sparse Sampling}):} La precisión de la estimación del orden circular mediante CPCA decae abruptamente si la distribución temporal real de las muestras (por ejemplo, en cohortes donde la mayoría de los decesos ocurren en una misma franja horaria) presenta grandes huecos o no es uniforme a lo largo del ciclo de 24 horas.
+\item \textbf{Rigidez Arquitectónica y Ausencia de Modularidad:} Aunque R es el ecosistema de referencia para el desarrollo de software estadístico en bioinformática, la implementación original de CIRCUST se concibió como un \textit{script} procedimental y monolítico. Esta falta de estructura modular dificulta su integración transparente en \textit{pipelines} de análisis de datos más complejos o híbridos (especialmente aquellos que combinan estadística clásica con \textit{Machine Learning} en ecosistemas Python). Además, esta rigidez de código impide aislar, probar y sustituir fácilmente componentes matemáticos concretos para la experimentación metodológica, penalizando la eficiencia y la capacidad de paralelización cuando se requiere ejecutar simulaciones sintéticas a gran escala.
 \end{enumerate}
 
-En respuesta a estas problemáticas, este proyecto se centra en la re-implementación algorítmica y el refinamiento estadístico de los métodos de ordenación circular, con el fin de proporcionar una herramienta computacional robusta, modular y analíticamente superior para entornos de datos ruidosos y con factores de confusión.
+\subsection{Motivación y Justificación del Trabajo}
+La convergencia de estas problemáticas motiva directamente el desarrollo de este Trabajo de Fin de Grado. El objetivo central no es simplemente la traducción de código de R a Python, sino una \textbf{re-arquitectura integral y un refinamiento estadístico profundo de la metodología CIRCUST}. 
+
+En particular, la incorporación de mecanismos de corrección de covariables mediante \textbf{regresión lineal sobre los componentes principales} permitirá aislar matemáticamente la señal rítmica del ruido del entorno (resolviendo el problema de los efectos de lote en datos como GTEx). Al combinar esta corrección interpretable con una nueva implementación modular, eficiente y paralelizable en Python, este trabajo dotará a CIRCUST de la robustez necesaria para procesar conjuntos de datos biológicos ruidosos y heterogéneos, acercando el rendimiento estadístico transparente al de los complejos modelos de aprendizaje profundo sin sacrificar su interpretabilidad.
+
 \chapter{Objetivos}
 El propósito fundamental de este trabajo es la re-implementación y el refinamiento metodológico del algoritmo CIRCUST, dotándolo de una arquitectura de software moderna y mejorando su solidez estadística. Para alcanzar este propósito, se establecen los siguientes objetivos específicos:
 
 \begin{enumerate}
     \item \textbf{Re-implementación Modular en Python:} Migrar y reestructurar el código original de CIRCUST hacia un entorno Python orientado a objetos. Esto garantizará la extensibilidad del software, facilitando su integración en pipelines computacionales más amplios y mejorando su eficiencia algorítmica.
     \item \textbf{Refinamiento de la Inferencia de Fase y Ajuste de Covariables:} Mejorar la precisión de la ordenación circular mediante la integración de modelos de regresión que permitan corregir los componentes principales en función de covariables clínicas o técnicas, aislado así la señal puramente circadiana.
-    \item \textbf{Desarrollo de un Marco de Simulación:} Diseñar un entorno de simulación capaz de generar conjuntos de datos transcriptómicos sintéticos. Esto permitirá evaluar sistemáticamente la robustez del nuevo algoritmo bajo condiciones controladas de perturbación, tales como distintos niveles de ruido, escasez de muestras y efectos por lotes.
-    \item \textbf{Validación con Datos Humanos Reales:} Aplicar el pipeline mejorado a conjuntos de datos transcriptómicos reales provenientes de tejido cerebral humano post-mortem (con metadatos de hora de fallecimiento conocidos) para cuantificar la precisión de la inferencia de fase y su relevancia biológica.
 \end{enumerate}
 
 \chapter{Metodología Matemática}
@@ -229,7 +246,7 @@ PLOS Computational Biology, 19(9):e1011510. \url{https://doi.org/10.1371/journal
 
 \bibitem{scholz2007}
 Scholz, M. (2007).
-\textit{Analysing periodic phenomena by circular pca}.
+\textit{Analysing Periodic Phenomena by Circular PCA}.
 En \textit{Bioinformatics Research and Development (BIRD 2007)} (pp. 38-47). Springer.
 
 \bibitem{CYCLOPS}
@@ -257,6 +274,21 @@ Science, 379(6631):478-483. \url{https://doi.org/10.1126/science.add0846}
 Rueda, C., Larriba, Y., y Peddada, S. (2019).
 \textit{Frequency Modulated Möbius Model Accurately Predicts Rhythmic Signals in Biological and Physical Sciences}.
 Scientific Reports, 9:18701. \url{https://doi.org/10.1038/s41598-019-54569-1}
+
+\bibitem{cosinor}
+Cornelissen, G. (2014). 
+\textit{Cosinor-based rhythmometry}. 
+Theoretical Biology \& Medical Modelling, 11:16. \url{https://doi.org/10.1186/1742-4682-11-16}
+
+\bibitem{larribaORI}
+Larriba, Y., Rueda, C., Fernández, M. A., y Peddada, S. (2020). 
+\textit{Order restricted inference in chronobiology}. 
+Statistics in Medicine, 39(3):265--278. \url{https://doi.org/10.1002/sim.8397}
+
+\bibitem{gtex2020}
+GTEx Consortium (2020). 
+\textit{The GTEx Consortium atlas of genetic regulatory effects across human tissues}. 
+Science, 369(6509):1318-1330. \url{https://doi.org/10.1126/science.aaz1776}
 
 \end{thebibliography}
 

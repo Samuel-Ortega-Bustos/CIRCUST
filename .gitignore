@@ -5,8 +5,11 @@
 *.RData
 *.xlsx
 *.egg-info/
+/output/*
 __pycache__/
 docs/*
 !/docs/main.tex
 !/docs/images/
 !/docs/images/*.pdf
+!/docs/sphinx/
+docs/sphinx/_build/
