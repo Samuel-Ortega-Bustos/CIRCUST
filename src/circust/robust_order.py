@@ -886,7 +886,7 @@ class RobustOrderEstimator:
     method : str
         Metodo de seleccion del orden final:
         - ``"best_k"``: elige la repeticion con mayor mediana R².
-        - ``"aggregate"``: agregacion circular de rangos (Barragan et al.).
+        - ``"aggregate"``: agregacion circular de rangos (Barragan et al.) (MEdiana circular de los ordenes).
 
     r2_min : float
         R² parametrico minimo en cada extraccion. Por defecto: 0.5.
