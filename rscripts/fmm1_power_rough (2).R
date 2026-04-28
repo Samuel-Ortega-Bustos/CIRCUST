@@ -40,7 +40,7 @@ mobius_cos_sin <- function(t, alpha, omega, den_eps = .Machine$double.eps) {
   }
   omega <- min(max(omega, 0), 1)
   
-  u <- 0.5 * (t - alpha)
+  u <- 0.5 * (t - alpha) #Dentro de la tangente 
   s <- sin(u)
   c <- cos(u)
   
