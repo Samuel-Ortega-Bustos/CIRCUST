@@ -31,11 +31,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
+from typing import Optional
 
 from math import pi
 
 from circust.fitting.ori import ORIModel
-from circust.fitting.fmm import FMMModel
+from circust.fitting.fmm            import FMMModel
+from circust.fitting.fmm_stabilized import StabilizedFMMModel, prepare_dataset
 from circust.fitting.cosinor import CosinorModel
 
 
@@ -149,11 +151,10 @@ def _fit_fmm_one(
     omega_grid: int,
     num_reps: int,
 ) -> tuple[float, float, float, np.ndarray]:
-    """
-    Ajusta FMM a un unico gen. Devuelve (peak_time, omega, r2, fitted).
+    """Ajusta FMM base a un unico gen. Devuelve (peak_time, omega, r2, fitted).
 
     Funcion pura a nivel de modulo para que ``joblib`` pueda serializarla
-    hacia procesos worker.
+    hacia procesos worker (FMM base puede paralelizar con muchos genes).
     """
     model = FMMModel(
         length_alpha_grid=alpha_grid,
@@ -161,6 +162,20 @@ def _fit_fmm_one(
         num_reps=num_reps,
     )
     fr = model.fit(row, circ)
+    return fr.peak_time, fr.params["omega"], fr.r2, fr.fitted
+
+
+def _fit_fmm_one_stab(
+    row:      np.ndarray,
+    circ:     np.ndarray,
+    stab_model: StabilizedFMMModel,
+) -> tuple[float, float, float, np.ndarray]:
+    """Ajusta FMM estabilizado reusando un ``StabilizedFMMModel`` ya preparado.
+
+    No se paraleliza: el fit es ~1ms por gen y serializar ``prepared`` (que
+    contiene matrices grandes) entre workers seria mas costoso.
+    """
+    fr = stab_model.fit(row, circ)
     return fr.peak_time, fr.params["omega"], fr.r2, fr.fitted
 
 
@@ -326,9 +341,14 @@ class TopGeneSelector:
         fmm_length_alpha_grid: int   = 48,
         fmm_length_omega_grid: int   = 24,
         fmm_num_reps:          int   = 3,
+        fmm_method:            str   = "base",
+        fmm_stab_kwargs:       dict|None = None,
+        lambda_star:           Optional[float] = None,
         n_jobs:                int   = -1,
         verbose:               bool  = True,
     ) -> None:
+        if fmm_method not in ("base", "stabilized"):
+            raise ValueError(f"fmm_method debe ser 'base' o 'stabilized', recibido: {fmm_method!r}")
         self.r2_ori_threshold      = r2_ori_threshold
         self.r2_fmm_threshold      = r2_fmm_threshold
         self.omega_min             = omega_min
@@ -336,6 +356,12 @@ class TopGeneSelector:
         self.fmm_length_alpha_grid = fmm_length_alpha_grid
         self.fmm_length_omega_grid = fmm_length_omega_grid
         self.fmm_num_reps          = fmm_num_reps
+        self.fmm_method            = fmm_method
+        # Si se proporciona lambda_star, lo inyectamos en stab_kwargs para
+        # saltar la calibracion (es lo que hace el pipeline tras heredarlo de CPCA)
+        self.fmm_stab_kwargs       = dict(fmm_stab_kwargs or {})
+        if lambda_star is not None and "lambda_star" not in self.fmm_stab_kwargs:
+            self.fmm_stab_kwargs["lambda_star"] = float(lambda_star)
         self.n_jobs                = n_jobs
         self.verbose               = verbose
 
@@ -464,12 +490,18 @@ class TopGeneSelector:
                 continue
 
             row = expr_norm.loc[seed].values.astype(np.float64)
-            pk, om, r2, _ = _fit_fmm_one(
-                row, circ,
-                self.fmm_length_alpha_grid,
-                self.fmm_length_omega_grid,
-                self.fmm_num_reps,
-            )
+            if self.fmm_method == "stabilized":
+                # Reusa el StabilizedFMMModel cacheado en _fit_fmm_batch
+                pk, om, r2, _ = _fit_fmm_one_stab(
+                    row, circ, self._cached_stab_model,
+                )
+            else:
+                pk, om, r2, _ = _fit_fmm_one(
+                    row, circ,
+                    self.fmm_length_alpha_grid,
+                    self.fmm_length_omega_grid,
+                    self.fmm_num_reps,
+                )
             idx_all = (
                 gene_names.index(seed) if seed in gene_names else -1
             )
@@ -586,22 +618,48 @@ class TopGeneSelector:
         rows: np.ndarray,
         circ: np.ndarray,
     ) -> list[tuple[float, float, float, np.ndarray]]:
-        """Ajusta FMM a multiples genes en paralelo con joblib."""
-        n  = rows.shape[0]
+        """Ajusta FMM a multiples genes en paralelo.
+
+        El backend de joblib se elige segun ``fmm_method``:
+
+        - **base**: ``loky`` (multiproceso). Argumentos pequenos por gen
+          (vector ``row`` + escalares); el coste de serializar es bajo y
+          se gana paralelismo real saltando el GIL.
+
+        - **stabilized**: ``threading``. Los workers comparten ``prepared``
+          (~23 MB de matrices precomputadas) por memoria sin serializar.
+          El fit interno usa BLAS/LAPACK y kernels ``@njit``, que liberan
+          el GIL, asi que threading da paralelismo efectivo aqui.
+        """
+        n = rows.shape[0]
+        from joblib import Parallel, delayed
+
+        # ── Camino estabilizado: prep + threading ────────────────────────
+        if self.fmm_method == "stabilized":
+            self._log(f"  Preparando FMM estabilizado (calibracion lambda)...")
+            prepared = prepare_dataset(circ, **self.fmm_stab_kwargs)
+            stab_model = StabilizedFMMModel(prepared=prepared)
+            self._cached_stab_model = stab_model        # reutilizable para seeds forzados
+            self._log(f"  lambda* = {prepared.lambda_star:.4f}")
+
+            if self.n_jobs == 1 or n <= 8:
+                return [_fit_fmm_one_stab(rows[i], circ, stab_model) for i in range(n)]
+
+            self._log(f"  Paralelizando {n} ajustes FMM (stab, threads) en {self.n_jobs} jobs ...")
+            return Parallel(n_jobs=self.n_jobs, backend="threading")(
+                delayed(_fit_fmm_one_stab)(rows[i], circ, stab_model)
+                for i in range(n)
+            )
+
+        # ── Camino base: loky (multiproceso, default) ────────────────────
         ag = self.fmm_length_alpha_grid
         og = self.fmm_length_omega_grid
         nr = self.fmm_num_reps
 
         if self.n_jobs == 1 or n <= 8:
-            return [
-                _fit_fmm_one(rows[i], circ, ag, og, nr)
-                for i in range(n)
-            ]
+            return [_fit_fmm_one(rows[i], circ, ag, og, nr) for i in range(n)]
 
-        from joblib import Parallel, delayed
-        self._log(
-            f"  Paralelizando {n} ajustes FMM en {self.n_jobs} jobs ..."
-        )
+        self._log(f"  Paralelizando {n} ajustes FMM en {self.n_jobs} jobs ...")
         return Parallel(n_jobs=self.n_jobs)(
             delayed(_fit_fmm_one)(rows[i], circ, ag, og, nr)
             for i in range(n)

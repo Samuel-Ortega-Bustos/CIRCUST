@@ -43,7 +43,8 @@ from math import pi
 from types import SimpleNamespace
 
 from circust.cpca import CPCA
-from circust.fitting.fmm import FMMModel
+from circust.fitting.fmm            import FMMModel
+from circust.fitting.fmm_stabilized import StabilizedFMMModel, prepare_dataset
 from circust.fitting.cosinor import CosinorModel
 from circust.fitting.ori import circular_unimodal_fit
 from circust.synchronizer import CircularSynchronizer
@@ -94,15 +95,22 @@ def _max_consecutive_gap(circ_sorted: np.ndarray) -> float:
 
 
 def _fit_gene(args):
-    """
-    Ajusta FMM + Cosinor + NP para un unico gen.
+    """Ajusta FMM + Cosinor + NP para un unico gen.
 
     Funcion a nivel de modulo para serializacion por ProcessPoolExecutor.
+
+    El segundo elemento de ``args`` puede ser:
+      - dict de kwargs para ``FMMModel`` (camino "base")
+      - un ``StabilizedFMMModel`` ya preparado (camino "stabilized");
+        en ese caso se reusa directamente sin construir nada.
     """
-    (i, gene, vvv, esc_k, fmm_kwargs, arntl_peak_raw,
+    (i, gene, vvv, esc_k, fmm_obj, arntl_peak_raw,
      orientation_changed, order_rot, n_samp) = args
 
-    fmm_loc = FMMModel(**fmm_kwargs)
+    if isinstance(fmm_obj, StabilizedFMMModel):
+        fmm_loc = fmm_obj                         # reusa el modelo compartido
+    else:
+        fmm_loc = FMMModel(**fmm_obj)             # base, construye por gen
     cosm_loc = CosinorModel()
 
     two_pi = 2.0 * pi
@@ -923,6 +931,10 @@ class RobustOrderEstimator:
         fmm_length_alpha_grid: int   = 48,
         fmm_length_omega_grid: int   = 24,
         fmm_num_reps:          int   = 3,
+        fmm_method:            str   = "base",
+        fmm_stab_kwargs:       dict|None = None,
+        lambda_star:           float|None = None,
+        recalibrate_lambda_per_rep: bool = True,
         n_jobs:                int   = 1,
         seed:                  int | None = None,
         verbose:               bool  = True,
@@ -931,6 +943,8 @@ class RobustOrderEstimator:
             raise ValueError(
                 f"method debe ser 'best_k' o 'aggregate', se recibio {method!r}"
             )
+        if fmm_method not in ("base", "stabilized"):
+            raise ValueError(f"fmm_method debe ser 'base' o 'stabilized', recibido: {fmm_method!r}")
         self.n_reps               = n_reps
         self.sample_size_fraction = sample_size_fraction
         self.method               = method
@@ -944,6 +958,14 @@ class RobustOrderEstimator:
             length_omega_grid=fmm_length_omega_grid,
             num_reps=fmm_num_reps,
         )
+        self.fmm_method      = fmm_method
+        self.fmm_stab_kwargs = dict(fmm_stab_kwargs or {})
+        # Lambda heredado del CPCA (compartido) y flag de recalibracion por rep.
+        # Si recalibrate_lambda_per_rep=False, se reutilizara lambda_star en
+        # todas las reps (caso no recomendado pero util para benchmarking).
+        # Si =True (default), cada rep recalibra con sus propias muestras 2/3.
+        self.lambda_star_inherited      = lambda_star
+        self.recalibrate_lambda_per_rep = recalibrate_lambda_per_rep
         self.n_jobs  = n_jobs
         self.seed    = seed
         self.verbose = verbose
@@ -1255,7 +1277,11 @@ class RobustOrderEstimator:
         """
         self._log("  --- Ejecutando repeticiones ---")
 
-        fmm = FMMModel(**self._fmm_kwargs)
+        # `fmm` se usa para ajustar los core genes (~12) dentro de cada
+        # repeticion como input al CircularSynchronizer interno. Se reasigna
+        # por repeticion cuando fmm_method='stabilized' porque el prepared
+        # depende de la escala circular de cada repeticion.
+        fmm = FMMModel(**self._fmm_kwargs) if self.fmm_method == "base" else None
         prelim = CircularSynchronizer(
             anchor_gene      = self.anchor_gene,
             direction_gene   = self.direction_gene,
@@ -1283,9 +1309,22 @@ class RobustOrderEstimator:
                 )
 
             # 1. CPCA sobre submatriz seleccionada
+            # Si no recalibramos por rep, propagamos lambda_star al CPCA interno
+            # para que tampoco recalibre alli (sino recalibraria 2x: una en este
+            # CPCA y otra en el bloque 3 de abajo).
+            cpca_stab_kwargs = dict(self.fmm_stab_kwargs)
+            if (self.fmm_method == "stabilized"
+                    and not self.recalibrate_lambda_per_rep
+                    and self.lambda_star_inherited is not None
+                    and "lambda_star" not in cpca_stab_kwargs):
+                cpca_stab_kwargs["lambda_star"] = float(self.lambda_star_inherited)
+
             sub_df = expr_full_norm.loc[genes_k]
             cpca_k = CPCA(
-                core_genes=genes_k, verbose=False
+                core_genes      = genes_k,
+                fmm_method      = self.fmm_method,
+                fmm_stab_kwargs = cpca_stab_kwargs,
+                verbose         = False,
             ).run(sub_df)
             order_k = cpca_k.sample_order
             esc_k   = cpca_k.circular_scale
@@ -1295,6 +1334,23 @@ class RobustOrderEstimator:
             top_k.columns = range(n_samp)
 
             # 3. Ajustar FMM a genes core en top_k
+            # Si stab, prepara el StabilizedFMMModel una vez para esta esc_k
+            # y se reutiliza tambien para los TOP en gene_args (mas abajo).
+            #
+            # Compartir lambda vs recalibrar por rep:
+            #   - recalibrate_lambda_per_rep=True  (default): recalibra con
+            #     las 2/3 muestras de la rep (escala distinta a la global)
+            #   - recalibrate_lambda_per_rep=False: reusa lambda_star
+            #     heredado de CPCA (mas rapido, valido si el metodo es robusto)
+            if self.fmm_method == "stabilized":
+                stab_kwargs = dict(self.fmm_stab_kwargs)
+                if (not self.recalibrate_lambda_per_rep
+                        and self.lambda_star_inherited is not None
+                        and "lambda_star" not in stab_kwargs):
+                    stab_kwargs["lambda_star"] = float(self.lambda_star_inherited)
+                prepared_k = prepare_dataset(esc_k, **stab_kwargs)
+                fmm = StabilizedFMMModel(prepared=prepared_k)
+
             core_present = [g for g in core_genes if g in top_k.index]
             fmm_fits   = {}
             peak_times = {}
@@ -1343,12 +1399,18 @@ class RobustOrderEstimator:
             esc_rot   = (esc_k - arntl_peak_raw + pi) % (2.0 * pi)
             order_rot = np.argsort(esc_rot)
 
+            # Construye el "fmm_obj" que recibe _fit_gene:
+            # - base: dict de kwargs (cada worker construye FMMModel)
+            # - stab: StabilizedFMMModel ya preparado (compartido por threads).
+            #         Reusamos `fmm` que se preparo arriba para los core genes.
+            fmm_obj = fmm if self.fmm_method == "stabilized" else self._fmm_kwargs
+
             gene_args = [
                 (
                     i, gene,
                     top_k.loc[gene].values.astype(np.float64),
                     esc_k,
-                    self._fmm_kwargs,
+                    fmm_obj,
                     arntl_peak_raw,
                     orientation_changed,
                     order_rot,
@@ -1362,7 +1424,13 @@ class RobustOrderEstimator:
             )
             if n_workers == 1:
                 gene_results = [_fit_gene(a) for a in gene_args]
+            elif self.fmm_method == "stabilized":
+                # Threading: comparte prepared en memoria, BLAS/Numba liberan GIL
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    gene_results = list(pool.map(_fit_gene, gene_args))
             else:
+                # Multiproceso: argumentos pequenos, paralelismo real
                 with ProcessPoolExecutor(max_workers=n_workers) as pool:
                     gene_results = list(pool.map(_fit_gene, gene_args))
 

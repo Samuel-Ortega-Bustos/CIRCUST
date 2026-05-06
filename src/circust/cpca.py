@@ -44,7 +44,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from circust.core_genes import SEED_GENES_DEFAULT
-from circust.fitting.fmm import FMMModel
+from circust.fitting.fmm            import FMMModel
+from circust.fitting.fmm_stabilized import StabilizedFMMModel, prepare_dataset
 from circust.fitting.cosinor import CosinorModel
 from circust.fitting.rhythm_model import FitResult
 from circust.preprocessing import normalise_matrix
@@ -131,6 +132,9 @@ class CPCAResult:
     pc1_initial:           np.ndarray                = field(default_factory=lambda: np.array([]))
     pc2_initial:           np.ndarray                = field(default_factory=lambda: np.array([]))
 
+    # ── FMM estabilizado: lambda calibrado, propagable a etapas siguientes ──
+    lambda_star:           Optional[float]           = None
+
     def summary(self) -> str:
         n_cpca = len(self.samples_dropped) - len(self.fmm_outliers)
         lines = [
@@ -195,6 +199,18 @@ class CPCA:
     fmm_num_reps : int
         Iteraciones de refinamiento FMM. Por defecto: 3.
 
+    fmm_method : str
+        ``"base"`` (default) usa ``FMMModel`` (RSS + Nelder-Mead).
+        ``"stabilized"`` usa ``StabilizedFMMModel`` (criterio de potencia
+        penalizado por rugosidad, pesos por densidad temporal). Cuando es
+        ``"stabilized"``, los parametros ``fmm_length_*`` y ``fmm_num_reps``
+        se ignoran y se usan los defaults del estabilizado o los pasados via
+        ``fmm_stab_kwargs``.
+
+    fmm_stab_kwargs : dict, opcional
+        Parametros adicionales para ``prepare_dataset`` cuando
+        ``fmm_method="stabilized"`` (ej: ``n_simulations``, ``n_repeats``).
+
     verbose : bool
         Imprimir mensajes de progreso.
 
@@ -223,8 +239,12 @@ class CPCA:
         fmm_length_alpha_grid:    int       = 48,
         fmm_length_omega_grid:    int       = 24,
         fmm_num_reps:             int       = 3,
+        fmm_method:               str       = "base",
+        fmm_stab_kwargs:          dict|None = None,
         verbose:                  bool      = True,
     ) -> None:
+        if fmm_method not in ("base", "stabilized"):
+            raise ValueError(f"fmm_method debe ser 'base' o 'stabilized', recibido: {fmm_method!r}")
         self.core_genes               = core_genes if core_genes is not None else SEED_GENES_DEFAULT
         self.n_outlier_candidates     = n_outlier_candidates
         self.tight_radius             = tight_radius
@@ -234,7 +254,41 @@ class CPCA:
         self.fmm_length_alpha_grid    = fmm_length_alpha_grid
         self.fmm_length_omega_grid    = fmm_length_omega_grid
         self.fmm_num_reps             = fmm_num_reps
+        self.fmm_method               = fmm_method
+        self.fmm_stab_kwargs          = fmm_stab_kwargs or {}
         self.verbose                  = verbose
+
+        # Lambda calibrado en _fit_initial; se reutiliza en _fit_final y se
+        # expone en CPCAResult.lambda_star para etapas posteriores del pipeline.
+        self._cached_lambda_star: Optional[float] = None
+
+    def _make_fmm_model(self, times: np.ndarray):
+        """Factory interno: construye el modelo FMM segun ``fmm_method``.
+
+        Para ``"stabilized"``, calibra lambda solo en la primera llamada
+        (en ``_fit_initial``) y lo cachea para reusarlo en ``_fit_final``.
+        Si el usuario ya proporciono ``lambda_star`` en ``fmm_stab_kwargs``,
+        salta la calibracion automatica desde el inicio.
+        """
+        if self.fmm_method == "stabilized":
+            stab_kwargs = dict(self.fmm_stab_kwargs)
+
+            # Si ya hay un lambda cacheado (segunda+ llamada), reusarlo
+            if self._cached_lambda_star is not None and "lambda_star" not in stab_kwargs:
+                stab_kwargs["lambda_star"] = self._cached_lambda_star
+
+            prepared = prepare_dataset(times, **stab_kwargs)
+
+            # Cachear la primera vez (o si el usuario forzo un lambda concreto)
+            if self._cached_lambda_star is None:
+                self._cached_lambda_star = float(prepared.lambda_star)
+
+            return StabilizedFMMModel(prepared=prepared)
+        return FMMModel(
+            length_alpha_grid = self.fmm_length_alpha_grid,
+            length_omega_grid = self.fmm_length_omega_grid,
+            num_reps          = self.fmm_num_reps,
+        )
 
     # -----------------------------------------------------------------------
     # API publica
@@ -332,6 +386,7 @@ class CPCA:
             cosinor_fits_initial = cos_fits_ini,
             pc1_initial          = pc1_initial,
             pc2_initial          = pc2_initial,
+            lambda_star          = self._cached_lambda_star,
         )
 
         self._log(result.summary())
@@ -443,11 +498,7 @@ class CPCA:
         signals["PC2"] = pc2[sample_order]
         signals["PC3"] = pc3[sample_order]
 
-        fmm_model = FMMModel(
-            length_alpha_grid = self.fmm_length_alpha_grid,
-            length_omega_grid = self.fmm_length_omega_grid,
-            num_reps          = self.fmm_num_reps,
-        )
+        fmm_model = self._make_fmm_model(circular_scale)
         cos_model = CosinorModel()
 
         fmm_fits:      dict[str, FitResult] = {}
@@ -557,11 +608,7 @@ class CPCA:
         fmm_fits_final : {gen: FitResult}
         peak_times     : {gen: float}
         """
-        fmm_model = FMMModel(
-            length_alpha_grid = self.fmm_length_alpha_grid,
-            length_omega_grid = self.fmm_length_omega_grid,
-            num_reps          = self.fmm_num_reps,
-        )
+        fmm_model = self._make_fmm_model(circular_scale)
 
         fmm_fits: dict[str, FitResult] = {}
         peaks:    dict[str, float]     = {}

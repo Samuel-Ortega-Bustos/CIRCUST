@@ -142,6 +142,18 @@ def _mobius(t: np.ndarray, alpha: float, omega: float) -> np.ndarray:
     return 2.0 * np.arctan(omega * np.tan((t - alpha) / 2.0))
 
 
+def _circular_abs_diff(a: float, b: float) -> float:
+    """Distancia angular minima entre dos angulos en radianes (resultado en [0, pi]).
+
+    Necesario para early-stopping del bucle ``num_reps``: si entre iteraciones
+    alpha pasa de 6.27 a 0.01 (cruzando 2*pi), la diferencia "lineal" es 6.26
+    pero la distancia circular real es solo 0.02. Sin esto el early stopping
+    fallaria justo cuando deberia activarse.
+    """
+    d = abs(a - b) % (2.0 * np.pi)
+    return float(min(d, 2.0 * np.pi - d))
+
+
 def _fmm_predict(
     t: np.ndarray,
     M: float, A: float, alpha: float, beta: float, omega: float,
@@ -502,11 +514,31 @@ class FMMModel(RhythmModel):
         length_omega_grid: int   = 24,
         omega_max:         float = 1.0,
         num_reps:          int   = 3,
+        skip_nm_r2:        float = 0.95,
+        early_stop_tol:    float = 1e-3,
     ) -> None:
+        """
+        Parameters
+        ----------
+        skip_nm_r2 : float
+            Si tras el grid search del paso 1 el R² ya supera este umbral, se
+            omite el refinamiento Nelder-Mead (rara vez aporta mas que decimales
+            cuando el grid ya da buen ajuste). Por defecto 0.95. Ponerlo a >1.0
+            (ej. 1.1) desactiva esta optimizacion (NM siempre se ejecuta).
+
+        early_stop_tol : float
+            Tolerancia para parar el bucle ``num_reps`` cuando los parametros
+            convergen entre iteraciones consecutivas. Si todos los cambios
+            absolutos en (alpha, beta, omega) son menores que esta tolerancia,
+            se omite la siguiente iteracion. Por defecto 1e-3. Ponerlo a 0
+            desactiva esta optimizacion.
+        """
         self.length_alpha_grid = length_alpha_grid
         self.length_omega_grid = length_omega_grid
         self.omega_max         = omega_max
         self.num_reps          = num_reps
+        self.skip_nm_r2        = skip_nm_r2
+        self.early_stop_tol    = early_stop_tol
 
     # ------------------------------------------------------------------
     # API publica
@@ -561,7 +593,10 @@ class FMMModel(RhythmModel):
         )
 
         best_par  = None
+        par_final = None
+        prev_par  = None         # parametros de la iteracion anterior (early stopping)
         objective = _make_step2_objective(data, time_points, self.omega_max)
+        ss_tot    = float(np.sum((data - data.mean()) ** 2))   # para R² del grid
 
         for rep in range(self.num_reps):
 
@@ -584,18 +619,42 @@ class FMMModel(RhythmModel):
                 best_par = prev_best
                 break
 
-            # ── Paso 2: refinamiento Nelder-Mead ────────────────────────
-            result = minimize(
-                objective,
-                x0      = best_par[:5],
-                method  = "Nelder-Mead",
-                options = {"xatol": 1e-6, "fatol": 1e-6, "maxiter": 5000},
-            )
-            par_final = result.x.copy()
+            # ── Optimizacion 1: skip Nelder-Mead si el grid ya da buen R²
+            # Calculamos el R² del mejor punto del grid; si supera el umbral,
+            # NM aporta poco mas que ruido y nos lo saltamos.
+            M_g, A_g, alpha_g, beta_g, omega_g = best_par[:5]
+            fitted_g = _fmm_predict(time_points, M_g, A_g, alpha_g, beta_g, omega_g)
+            r2_grid  = 1.0 - float(np.sum((data - fitted_g) ** 2)) / ss_tot if ss_tot > 0 else 0.0
+
+            if r2_grid >= self.skip_nm_r2:
+                par_final = best_par[:5].copy()
+            else:
+                # ── Paso 2: refinamiento Nelder-Mead ────────────────────
+                result = minimize(
+                    objective,
+                    x0      = best_par[:5],
+                    method  = "Nelder-Mead",
+                    options = {"xatol": 1e-6, "fatol": 1e-6, "maxiter": 5000},
+                )
+                par_final = result.x.copy()
 
             # Envolver alpha y beta en [0, 2*pi)
             par_final[2] = par_final[2] % (2 * np.pi)
             par_final[3] = par_final[3] % (2 * np.pi)
+
+            # ── Optimizacion 2: early stopping si los parametros convergen
+            # Si entre la iteracion anterior y la actual los cambios en
+            # (alpha, beta, omega) son menores que la tolerancia, parar.
+            # alpha y beta son angulares, asi que comparamos su distancia
+            # circular minima.
+            if self.early_stop_tol > 0 and prev_par is not None:
+                d_alpha = _circular_abs_diff(par_final[2], prev_par[2])
+                d_beta  = _circular_abs_diff(par_final[3], prev_par[3])
+                d_omega = abs(par_final[4] - prev_par[4])
+                if d_alpha < self.early_stop_tol and d_beta < self.early_stop_tol \
+                        and d_omega < self.early_stop_tol:
+                    break
+            prev_par = par_final.copy()
 
             # Estrechar rejillas alrededor del mejor actual para siguiente iteracion
             if rep < self.num_reps - 1:
@@ -606,7 +665,7 @@ class FMMModel(RhythmModel):
                     par_final[4], omega_grid
                 )
 
-        if best_par is None:
+        if par_final is None:
             # Fallback: modelo plano
             par_final = np.array([data.mean(), 0.0, 0.0, 0.0, 0.5])
 
