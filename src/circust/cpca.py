@@ -557,15 +557,15 @@ class CPCA:
             for pos in np.where(np.abs(core_res[i]) > self.fmm_threshold)[0]:
                 fmm_cands.append(int(sample_order[pos]))
 
-        # Union OR con tope
+        # Union OR con tope (chequea ANTES de agregar para que cap=0 elimine 0)
         seen:       set[int]  = set()
         all_dropped: list[int] = []
         for idx in list(outlier_idx) + fmm_cands:
+            if len(all_dropped) >= cap:
+                break
             if idx not in seen:
                 seen.add(idx)
                 all_dropped.append(idx)
-            if len(all_dropped) >= cap:
-                break
 
         cpca_outs = [i for i in all_dropped if i in cpca_set]
         fmm_outs  = [i for i in all_dropped if i not in cpca_set]
