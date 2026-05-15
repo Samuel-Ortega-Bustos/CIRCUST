@@ -10,13 +10,33 @@ import numpy as np
 
 # ── formatos soportados ───────────────────────────────────────────────────
 _LOADERS = {
-    ".csv":  "csv",
-    ".tsv":  "tsv",
-    ".txt":  "tsv",       # se asume separado por tabuladores cuando .txt
-    ".xlsx": "excel",
-    ".xls":  "excel",
+    ".csv":     "csv",
+    ".tsv":     "tsv",
+    ".txt":     "tsv",       # se asume separado por tabuladores cuando .txt
+    ".xlsx":    "excel",
+    ".xls":     "excel",
     ".parquet": "parquet",
+    ".gct":     "gct",       # Gene Cluster Text (especificacion GenePattern/GSEA)
+    ".gct.gz":  "gct",       # GCT comprimido con gzip
 }
+
+
+def _detect_format(file_path: pathlib.Path) -> tuple[str | None, str | None]:
+    """Detecta el formato y la extension efectiva.
+
+    Maneja extensiones compuestas como ``.gct.gz`` que ``pathlib.suffix`` no
+    captura por si solo (devolveria ``.gz``).
+
+    Returns
+    -------
+    (extension, fmt) : (str, str) o (None, None) si no se reconoce.
+    """
+    name_lower = file_path.name.lower()
+    # Comprueba primero las extensiones compuestas (mas largas)
+    for ext in sorted(_LOADERS.keys(), key=len, reverse=True):
+        if name_lower.endswith(ext):
+            return ext, _LOADERS[ext]
+    return None, None
 
 
 def load_expression_matrix(
@@ -39,6 +59,11 @@ def load_expression_matrix(
     .tsv / .txt     Valores separados por tabuladores
     .xlsx / .xls    Libro Excel (se lee la primera hoja)
     .parquet        Apache Parquet — recomendado para conjuntos grandes
+    .gct            Gene Cluster Text (formato GenePattern/GSEA): cabecera de
+                    2 lineas (#1.2 + dimensiones), columnas Name+Description
+                    seguidas de las muestras. Description pasa a indice de fila;
+                    Name se descarta.
+    .gct.gz         Igual que .gct pero comprimido con gzip.
 
     Parameters
     ----------
@@ -98,14 +123,13 @@ def load_expression_matrix(
             f"Verifica la ruta y asegurate de que el archivo esta en la carpeta data/."
         )
 
-    # ── deteccion de formato ──────────────────────────────────────────────
-    extension = file_path.suffix.lower()
-    fmt = _LOADERS.get(extension)
+    # ── deteccion de formato (incluye extensiones compuestas .gct.gz) ─────
+    extension, fmt = _detect_format(file_path)
 
     if fmt is None:
         supported = ", ".join(_LOADERS.keys())
         raise ValueError(
-            f"Formato de archivo no soportado: '{extension}'\n"
+            f"Formato de archivo no soportado: '{file_path.suffix}'\n"
             f"Formatos soportados: {supported}"
         )
 
@@ -123,6 +147,10 @@ def load_expression_matrix(
                 "que contiene los identificadores de genes mediante el parametro 'gene_column'."
             )
         index_col = gene_column
+    elif fmt == "gct":
+        # GCT tiene formato fijo: ``Description`` se usa como indice; ``gene_column``
+        # se ignora porque la especificacion del formato lo determina.
+        index_col = "Description"
     else:
         # no deberia ocurrir porque ya validamos fmt
         index_col = None
@@ -140,6 +168,9 @@ def load_expression_matrix(
     elif fmt == "parquet":
         matrix = _load_parquet(file_path, index_col=index_col,
                                chunk_size=chunk_size)
+
+    elif fmt == "gct":
+        matrix = _load_gct(file_path, gzipped=extension.endswith(".gz"))
 
     # ── forzar valores numericos ──────────────────────────────────────────
     # Algunos Excel o CSV mal formateados contienen cadenas sueltas.
@@ -185,6 +216,33 @@ def _load_parquet(
         elif isinstance(index_col, int) and index_col < len(matrix.columns):
             matrix = matrix.set_index(matrix.columns[index_col])
 
+    return matrix
+
+
+def _load_gct(file_path: pathlib.Path, gzipped: bool) -> pd.DataFrame:
+    """Carga un archivo GCT (Gene Cluster Text) con o sin compresion gzip.
+
+    Estructura del formato (especificacion GenePattern/GSEA):
+      Linea 1:  ``#1.2`` (version)
+      Linea 2:  ``<n_genes>\\t<n_samples>`` (dimensiones)
+      Linea 3:  cabecera ``Name\\tDescription\\t<sample_1>\\t...\\t<sample_N>``
+      Resto:    una fila por gen con valores numericos.
+
+    El indice resultante es la columna ``Description`` (simbolo del gen). La columna
+    ``Name`` se descarta porque es el ensemble id y no es una muestra.
+    """
+    compression = "gzip" if gzipped else None
+    # skiprows=2: saltar la linea de version y la de dimensiones
+    matrix = pd.read_csv(
+        file_path,
+        sep         = "\t",
+        skiprows    = 2,
+        index_col   = "Description",
+        compression = compression,
+    )
+    # Descartar la columna Name si esta presente
+    if "Name" in matrix.columns:
+        matrix = matrix.drop(columns=["Name"])
     return matrix
 
 
@@ -372,6 +430,14 @@ class Preprocessor:
 
         # paso 1 — eliminar genes sin nombre
         mat = self._drop_unnamed(matrix)
+
+        # paso 1.5 — resolver alias geneticos (BMAL1 -> ARNTL, etc.)
+        from circust.core_genes import apply_gene_aliases
+        before = set(mat.index)
+        mat = apply_gene_aliases(mat)
+        renamed = before - set(mat.index)
+        if renamed:
+            self._log(f"  Paso 1.5 — alias renombrados: {sorted(renamed)}")
 
         # paso 2 — eliminar genes sparse
         mat, dropped_sparse = self._drop_sparse(mat)

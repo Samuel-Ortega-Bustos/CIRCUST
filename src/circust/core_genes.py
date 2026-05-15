@@ -79,6 +79,32 @@ PRESETS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Alias de genes (nombre_canonico → alias_alternativo)
+# ---------------------------------------------------------------------------
+# Si un dataset usa el alias en vez del canonico, ``apply_gene_aliases`` lo
+# renombra. Para anadir un nuevo alias en el futuro, basta con incluir una
+# linea aqui (ej: ``"PER1": "RIGUI"``).
+GENE_ALIASES: dict[str, str] = {
+    "ARNTL": "BMAL1",      # ARNTL = BMAL1 (Aryl hydrocarbon Receptor Nuclear Translocator-Like)
+}
+
+
+def apply_gene_aliases(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Renombra alias al nombre canonico en el indice de ``matrix``.
+
+    Por cada par ``canonico ↔ alias``:
+      - Si el canonico ya esta presente, no hace nada (los alias se ignoran).
+      - Si solo el alias esta, lo renombra al canonico.
+    """
+    rename = {
+        alias: canonical
+        for canonical, alias in GENE_ALIASES.items()
+        if alias in matrix.index and canonical not in matrix.index
+    }
+    return matrix.rename(index=rename) if rename else matrix
+
+
+# ---------------------------------------------------------------------------
 # Contenedor de resultados
 # ---------------------------------------------------------------------------
 
