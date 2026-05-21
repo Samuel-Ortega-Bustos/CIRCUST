@@ -438,6 +438,9 @@ class CircularSynchronizer:
                 par_core[i] = [M, A, na2, nb2, omega]
 
         # ── Reordenar columnas de la matriz ───────────────────────────────
+        # Nota: ``iloc`` preserva los nombres originales de muestra; **no**
+        # reseteamos a ``range(n)`` para que los consumidores (R, scripts
+        # de validacion, etc.) puedan emparejar por nombre directamente.
         if forward:
             o_new   = esc_T
             esc_new = esc2
@@ -446,8 +449,6 @@ class CircularSynchronizer:
             o_new   = esc_T[::-1].copy()
             esc_new = (2.0 * pi - esc2[::-1]) % (2.0 * pi)
             mat_new = expr_ordered.iloc[:, esc_T[::-1]].copy()
-
-        mat_new.columns = range(mat_new.shape[1])
 
         # ── Clasificar como dia / noche ────────────────────────────────────
         names_day   = []
@@ -532,7 +533,7 @@ class CircularSynchronizer:
             o_new           = o[::-1].copy()
             esc_new         = (2.0 * pi - esc[::-1]) % (2.0 * pi)
             mat_new         = mat.iloc[:, ::-1].copy()
-            mat_new.columns = range(mat_new.shape[1])
+            # ``iloc`` preserva los nombres de muestra; no reseteamos columnas
             pars_new        = par.copy()
             pars_new[:, 2]  = (2.0 * pi - par[:, 2]) % (2.0 * pi)  # α
             pars_new[:, 3]  = (2.0 * pi - par[:, 3]) % (2.0 * pi)  # β
