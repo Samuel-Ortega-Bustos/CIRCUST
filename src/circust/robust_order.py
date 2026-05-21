@@ -750,8 +750,10 @@ class RobustOrderEstimator:
             esc_k   = cpca_k.circular_scale
 
             # ── 2. Reordenar la matriz TOP ──────────────────────────────
+            # ``iloc`` preserva los nombres originales de muestra; no
+            # reseteamos columnas para que la salida final emparejada por
+            # nombre sea posible aguas arriba.
             top_k = top_matrix.iloc[:, order_k].copy()
-            top_k.columns = range(n_samp)
 
             # ── 3. Construir modelo FMM y ajustar core genes para sync ──
             if self.fmm_method == "stabilized":
@@ -919,35 +921,36 @@ class RobustOrderEstimator:
         circ_scales:   np.ndarray,
         n_samp:        int,
     ) -> tuple[np.ndarray, np.ndarray, float, float]:
-        """Agrega los K ordenes en uno solo via TSP3 (Barragan et al. 2015).
+        """Agrega los K ordenes de MUESTRAS en uno solo via TSP3/HODs.
 
-        Construye la matriz ``Theta`` (K, n) con los angulos asignados a cada
-        muestra en cada repeticion, y delega la agregacion al modulo
-        ``circular_aggregation``. Despues deriva la escala circular del orden
-        consenso como la media circular de las escalas por repeticion.
+        Aplicacion de la tecnica de Barragan et al. 2015 al problema de
+        orden temporal de muestras (propuesta del TFG): los items que se
+        agregan son las n muestras, y la matriz ``Theta`` tiene forma
+        ``(K, n_samp)`` donde ``Theta[k, i]`` es la fase asignada a la
+        muestra ``i`` en la repeticion ``k``.
+
+        Despues deriva la escala circular del orden consenso como media
+        circular de las K escalas por repeticion.
         """
         K = sample_orders.shape[0]
 
-        # Construir Theta: para la rep k, el angulo asignado a la muestra i es
-        # la posicion de i en sample_orders[k] convertida a [0, 2*pi).
-        # Usamos la escala circular real (circ_scales) que ya esta sincronizada.
+        # Construir Theta: para la rep k, el angulo asignado a la muestra i
+        # es circ_scales[k, pos] donde pos es la posicion de i en
+        # sample_orders[k]. Reasignamos: Theta[k, sample_i] = phi
         Theta = np.zeros((K, n_samp), dtype=np.float64)
         for k in range(K):
-            # circ_scales[k] esta en orden ascendente y corresponde a
-            # sample_orders[k]. Reasignamos: Theta[k, sample_i] = phi
             for pos, sample_i in enumerate(sample_orders[k]):
                 Theta[k, sample_i] = circ_scales[k, pos]
 
-        self._log(f"    Construyendo matriz Theta ({K} x {n_samp}) y agregando "
-                  f"con method={self.aggregation_method}...")
+        self._log(f"    Construyendo matriz Theta ({K} x {n_samp} muestras) y "
+                  f"agregando con method={self.aggregation_method}...")
         out = aggregate_circular_orders(
             Theta=Theta, weights=None, method=self.aggregation_method,
         )
-
-        consensus_order = out["order"]               # permutacion de muestras
+        consensus_order = out["order"]
         msce_consensus  = out["msce"]
         cktau_consensus = out["cktau"]
-        self._log(f"    Consenso: MSCE = {msce_consensus:.4f}, "
+        self._log(f"    Consenso (muestras): MSCE = {msce_consensus:.4f}, "
                   f"CKTau = {cktau_consensus:.4f}")
 
         # Derivar la escala circular del orden consenso como media circular
@@ -956,7 +959,6 @@ class RobustOrderEstimator:
         for pos, sample_j in enumerate(consensus_order):
             angles = []
             for k in range(K):
-                # posicion de sample_j en sample_orders[k]
                 pos_k = int(np.where(sample_orders[k] == sample_j)[0][0])
                 angles.append(circ_scales[k, pos_k])
             angles = np.asarray(angles)
