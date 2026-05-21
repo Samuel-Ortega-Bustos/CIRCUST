@@ -20,13 +20,17 @@ Helpers:
 Alineacion:
     - align_phases_by_mad(pred, true, period, try_reflection, grid_step)
 
-Estadisticos individuales:
+Estadisticos individuales (sobre vectores de fases):
     - median_absolute_error(pred, true, period)        MedAE
     - std_absolute_error(pred, true, period)           SDAE
     - pct_within(pred, true, threshold_h, period)      %< Xh
     - auc_error_cdf(pred, true, period)                AUC del CDF
     - circular_correlation(pred, true, period)         CCC Jammalamadaka-Sarma
     - circular_correlation_trimmed(pred, true, period) rTrim (Mahmood 2022)
+
+Estadisticos individuales (sobre matrices ajustadas FMM):
+    - rre(data, fit_predicted)                         RRE Eq.(8) Larriba 2019
+    - cre(fit_real, fit_predicted)                     CRE Eq.(9) Larriba 2019
 
 Atajo:
     - evaluate_all(pred, true, period, ...)            todas las metricas en dict
@@ -448,6 +452,179 @@ def circular_correlation_trimmed(
     num = float((sp * st).sum())
     den = float(np.sqrt((sp ** 2).sum() * (st ** 2).sum()))
     return num / den if den > 0.0 else 0.0
+
+
+# ===========================================================================
+# RRE / CRE — metricas a nivel de matrices ajustadas FMM (Larriba 2019)
+# ===========================================================================
+#
+# Estas dos metricas NO comparan vectores de fases sino **matrices completas
+# de expresion ajustada**. Validan el orden de muestras de forma indirecta:
+# si el orden predicho es bueno, los ajustes FMM de los genes top que se
+# obtienen con ese orden reconstruyen bien (a) los datos crudos (RRE) o
+# (b) los ajustes FMM bajo el orden real (CRE).
+#
+# Por eso la firma es distinta: requieren matrices ``(G, n)`` de genes top,
+# no los vectores ``(n,)`` de fases por sample. El re-fit del FMM bajo cada
+# orden lo hace el orquestador antes de llamar a estas funciones.
+
+def _sre_relative(
+    reference: np.ndarray,
+    fitted:    np.ndarray,
+    eps:       float = 1e-12,
+) -> np.ndarray:
+    """
+    Suma de errores cuadraticos *relativos*, por gen.
+
+    Para cada gen ``k``::
+
+        SRE^k = sum_i ((reference[k,i] - fitted[k,i]) / reference[k,i])^2
+
+    Devuelve un array ``(G,)`` con un valor por gen.
+
+    Notas
+    -----
+    La definicion del paper (Larriba 2019, Eqs. 8-9) usa errores normalizados
+    por el valor de referencia, lo cual asume ``reference[k,i] != 0``. En
+    expresion genica log-transformada (lo habitual) esto se cumple, pero
+    se anade un ``eps`` minimo por seguridad numerica.
+    """
+    denom = np.where(np.abs(reference) < eps, eps, reference)
+    return np.sum(((reference - fitted) / denom) ** 2, axis=1)
+
+
+def rre(
+    data:          np.ndarray,
+    fit_predicted: np.ndarray,
+) -> float:
+    """
+    **Relative Reconstruction Error** (Larriba 2019, Eq. 8).
+
+    .. math::
+
+        RRE_T(o) = \\frac{\\sum_k \\sum_i \\left(\\frac{Y_{k,i} - \\hat Y^k_{o,i}}{Y_{k,i}}\\right)^2}
+                        {\\sum_k \\sum_i \\left(\\frac{Y_{k,i} - \\overline{Y_k}}{Y_{k,i}}\\right)^2}
+
+    Mide cuanto se aleja el ajuste FMM **bajo el orden predicho** de los
+    datos crudos, normalizado por la dispersion total. Es esencialmente
+    1 - R^2 agregado sobre todos los genes top, en escala relativa.
+
+    Interpretacion
+    --------------
+    - ``RRE -> 0``: el FMM bajo orden predicho reconstruye casi perfecto los
+      datos crudos. Senal: el orden es consistente con la estructura ritmica
+      de los genes top.
+    - ``RRE -> 1``: el ajuste no es mejor que una constante (el orden
+      predicho destruye la estructura ritmica).
+    - ``RRE > 1``: el ajuste es **peor** que una constante (orden patologico).
+
+    Util incluso **sin ground truth**: solo requiere los datos crudos y el
+    fit FMM bajo el orden predicho. Aplicable a datos reales (GTEx, baboons,
+    skeletal muscle).
+
+    Parameters
+    ----------
+    data
+        Matriz de expresion observada de los genes top, forma ``(G, n)``.
+    fit_predicted
+        Matriz de valores ajustados FMM bajo el orden predicho, ``(G, n)``,
+        evaluada en las mismas posiciones-muestra que ``data``.
+
+    Returns
+    -------
+    float
+        RRE agregado sobre los ``G`` genes.
+
+    Referencias
+    -----------
+    Larriba Y, Rueda C, Fernandez MA, Peddada SD (2019). Order Restricted
+    Inference in Chronobiology. *Statistics in Medicine*, Eq. (8). La
+    sustitucion IR -> FMM es indicacion de la tutora.
+    """
+    data          = np.asarray(data,          dtype=np.float64)
+    fit_predicted = np.asarray(fit_predicted, dtype=np.float64)
+    if data.shape != fit_predicted.shape:
+        raise ValueError(
+            f"data{data.shape} y fit_predicted{fit_predicted.shape} "
+            f"deben tener la misma forma (G, n)."
+        )
+
+    means = data.mean(axis=1, keepdims=True)
+    sre_residual = _sre_relative(data, fit_predicted).sum()
+    sre_total    = _sre_relative(data, np.broadcast_to(means, data.shape)).sum()
+    return float(sre_residual / sre_total) if sre_total > 0.0 else float("nan")
+
+
+def cre(
+    fit_real:      np.ndarray,
+    fit_predicted: np.ndarray,
+) -> float:
+    """
+    **Concordance Relative Error** (Larriba 2019, Eq. 9).
+
+    .. math::
+
+        CRE_T(o, REAL) =
+        \\frac{\\sum_k \\sum_i \\left(\\frac{\\hat Y^k_{REAL,i} - \\hat Y^k_{o,i}}{\\hat Y^k_{REAL,i}}\\right)^2}
+             {\\sum_k \\sum_i \\left(\\frac{\\hat Y^k_{REAL,i} - \\overline{\\hat Y^k_{REAL}}}{\\hat Y^k_{REAL,i}}\\right)^2}
+
+    Mide la concordancia entre **dos reconstrucciones FMM** del mismo gen:
+    una usando el orden predicho de samples y otra usando el orden real.
+    Solo aplicable cuando se conoce el ground truth (datos sinteticos,
+    experimentos con tiempo de muerte conocido).
+
+    Por que valida orden de muestras
+    --------------------------------
+    Las fases predichas no se evaluan en abstracto: si son correctas, los
+    pares ``(phi_pred_i, y_{k,i})`` definen la misma curva FMM que los
+    pares ``(phi_real_i, y_{k,i})`` -- solo cambia la etiqueta del eje t.
+    Si las fases predichas estan barajadas, los dos FMM ajustan **a curvas
+    distintas** sample-a-sample. CRE cuantifica esa discrepancia.
+
+    Ventajas frente al CCC entre vectores de fases
+    ----------------------------------------------
+    - Invariante a rotacion global del orden (el FMM se ajusta igual).
+    - Pondera los errores de fase por su **impacto en la reconstruccion**:
+      errores en zonas donde los genes top tienen mucha pendiente cuentan
+      mas que en zonas planas.
+    - Agrega informacion de todos los genes top en un solo escalar.
+
+    Interpretacion
+    --------------
+    - ``CRE -> 0``: orden predicho equivalente al real (predicccion perfecta).
+    - ``CRE = 1``: no es mejor que una constante.
+    - ``CRE > 1``: el orden predicho destruye mas senal de la que recupera.
+
+    Parameters
+    ----------
+    fit_real
+        Matriz ``(G, n)`` de FMM ajustado con las fases reales.
+    fit_predicted
+        Matriz ``(G, n)`` de FMM ajustado con las fases predichas,
+        evaluada en las mismas posiciones-muestra.
+
+    Returns
+    -------
+    float
+
+    Referencias
+    -----------
+    Larriba Y, Rueda C, Fernandez MA, Peddada SD (2019). Order Restricted
+    Inference in Chronobiology. *Statistics in Medicine*, Eq. (9). La
+    sustitucion IR -> FMM es indicacion de la tutora.
+    """
+    fit_real      = np.asarray(fit_real,      dtype=np.float64)
+    fit_predicted = np.asarray(fit_predicted, dtype=np.float64)
+    if fit_real.shape != fit_predicted.shape:
+        raise ValueError(
+            f"fit_real{fit_real.shape} y fit_predicted{fit_predicted.shape} "
+            f"deben tener la misma forma (G, n)."
+        )
+
+    means = fit_real.mean(axis=1, keepdims=True)
+    sre_residual = _sre_relative(fit_real, fit_predicted).sum()
+    sre_total    = _sre_relative(fit_real, np.broadcast_to(means, fit_real.shape)).sum()
+    return float(sre_residual / sre_total) if sre_total > 0.0 else float("nan")
 
 
 # ===========================================================================
