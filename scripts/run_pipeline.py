@@ -2,61 +2,81 @@
 """
 run_pipeline.py
 ===============
-Ejecución de extremo a extremo del pipeline CIRCUST (Etapas 1-2) con
-visualizaciones diagnósticas completas. Soporta cualquier formato de
-matriz de expresión (CSV, TSV, Parquet, Excel) y conjuntos de genes
-core configurables.
+Ejecucion del algoritmo CIRCUST (Etapas 1-4). **Solo** ejecuta el pipeline
+y vuelca los resultados a CSV/TXT/JSON para que los consuman otros
+programas (scripts de validacion sintetica, generadores de graficos en
+Python o R, analisis aguas abajo, etc.).
+
+No produce graficos: el plotting vive en scripts independientes.
+
+Etapas ejecutadas
+-----------------
+    1.0  Preprocesamiento (min-max, filtrado de genes sparse)
+    1.1  CPCA + deteccion de outliers
+    2    Sincronizador (ancla ARNTL en pi, direccion via DBP)
+    3    Seleccion de genes TOP (R2_ORI, R2_FMM, omega, cobertura)
+    4    Estimacion robusta del orden (K repeticiones + agregacion)
 
 Ejemplos
 --------
-    # Por defecto: matrixIn.parquet con genes core de Larriba
+    # Por defecto: data/matrixIn.parquet con genes core de Larriba
     python scripts/run_pipeline.py
 
-    # Entrada CSV (neuronas glutamatérgicas BA46)
-    python scripts/run_pipeline.py --data data/BA46_glut_sample_no_minmax.csv \\
-                                   --label "BA46 glutamatergic"
+    # Entrada CSV
+    python scripts/run_pipeline.py --data data/BA46_glut_sample_no_minmax.csv
 
-    # Genes core personalizados (conjunto ratón Zhang et al. 2014)
+    # Preset alternativo de genes core
+    python scripts/run_pipeline.py --core-genes zhang
+
+    # Lista personalizada
     python scripts/run_pipeline.py --core-genes ARNTL,DBP,NR1D1,PER1,PER2,PER3
 
-    # Parquet con columna de genes explícita + DPI de publicación
-    python scripts/run_pipeline.py --data data/matrixIn.parquet \\
-                                   --gene-column gene_id \\
-                                   --dpi 300 -o output/pub_run
+Salida
+------
+    <output>/
+    ├── manifest.json         config + semilla (reproducibilidad)
+    │
+    ├── sample_order.csv      orden de muestras — UNA FILA POR MUESTRA.
+    │                          Es la salida principal del TFG (mejora
+    │                          en la inferencia del orden temporal de
+    │                          muestras via agregacion de Barragan 2015).
+    │                          Se valida contra ground truth (TOD o
+    │                          tiempos reales conocidos):
+    │                            sample_name     : nombre real de la muestra
+    │                            circular_phase  : fase en RADIANES, [0, 2*pi) — canonico
+    │                            phase_h         : fase en HORAS,   [0, 24)  — interpretable
+    │
+    └── circust_atlas.csv     [M^TOP] — atlas circadiano del tejido,
+                              UNA FILA POR GEN TOP. Salida cientifica
+                              canonica de CIRCUST (Larriba et al. 2023):
+                                gene_name      : simbolo del gen TOP
+                                r2_fmm         : R^2 del ajuste FMM
+                                amplitude      : amplitud A
+                                peak_phase_rad : pico t_U en [0, 2*pi)
+                                peak_phase_h   : pico en [0, 24) horas
+                                omega          : asimetria / agudeza
+                                classification : 'day' (t_U in [0, pi))
+                                                 o 'night' (t_U in [pi, 2pi))
 
-    # Parámetros del pipeline ajustados
-    python scripts/run_pipeline.py --sparse-threshold 0.4 \\
-                                   --outlier-uni-threshold 5.0 \\
-                                   --fmm-reps 5
+Solo se generan estos tres archivos. Las metricas y resumenes intermedios
+se imprimen por stdout durante la ejecucion pero no se guardan en disco.
 
-Estructura de salida
---------------------
-    <output_dir>/
-    ├── results/
-    │   ├── preprocessing_summary.txt
-    │   ├── cpca_summary.txt
-    │   ├── outlier_summary.txt
-    │   ├── preliminary_order_summary.txt
-    │   ├── core_gene_peaks.csv
-    │   ├── core_gene_r2.csv
-    │   └── sample_order.csv
-    └── figures/
-        ├── 01_variance_explained.png
-        ├── 02_cpca_scatter.png
-        ├── 03_cpca_gene_panels.png
-        ├── 04_core_gene_fits.png
-        ├── 05_residual_strips.png
-        ├── 06_residual_heatmap.png
-        ├── 07_circular_peaks.png
-        ├── 08_ordered_profiles.png
-        ├── 09_r2_comparison.png
-        ├── 10_day_night_diagram.png
-        ├── 11_expression_heatmap.png
-        └── 12_pipeline_summary.png
+Notas sobre la agregacion
+-------------------------
+La **agregacion opera a nivel de MUESTRAS** (propuesta del TFG, seccion 2:
+aplicar la tecnica de Barragan 2015 al orden de muestras de CIRCUST):
+
+- ``--robust-method best_k``: se selecciona la repeticion con mayor
+  mediana R^2 y se usan su orden de muestras + sus parametros FMM por gen.
+- ``--robust-method aggregate``: TSP3/HODs se aplica a la matriz
+  ``(K reps x n_muestras)`` de fases asignadas por muestra para producir
+  UN orden de muestras consenso. Despues se re-ajusta FMM por gen sobre
+  ese orden consenso para obtener los parametros del atlas.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -64,66 +84,46 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ── Asegurar que la raíz del proyecto está en sys.path ─────────────────────
+# ── sys.path para importar el paquete circust ──────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-# ── Importaciones del pipeline CIRCUST ─────────────────────────────────────
 from circust.preprocessing import load_expression_matrix, Preprocessor
-from circust.cpca import CPCA
-from circust.synchronizer import CircularSynchronizer
-from circust.top_genes import TopGeneSelector
-from circust.robust_order import RobustOrderEstimator
-from circust.core_genes import CoreGeneSelector
-
-# ── Importaciones de visualización ─────────────────────────────────────────
-from circust.visualization import (
-    plot_pc_scatter,
-    plot_gene_panels,
-    plot_core_gene_fits,
-    plot_residual_strips,
-    plot_residual_heatmap,
-    plot_circular_peaks,
-    plot_ordered_profiles,
-    plot_r2_comparison,
-    plot_day_night_diagram,
-    plot_pipeline_summary,
-    plot_variance_explained,
-    plot_expression_overview,
-)
+from circust.cpca          import CPCA
+from circust.synchronizer  import CircularSynchronizer
+from circust.top_genes     import TopGeneSelector
+from circust.robust_order  import RobustOrderEstimator
+from circust.core_genes    import CoreGeneSelector
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Configuración — editar esta sección para cambiar los valores por defecto
+# Configuracion por defecto — editar aqui o sobreescribir via CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Parámetros del pipeline — modificar aquí o sobreescribir via CLI.
 DEFAULT_CONFIG = {
     # Preprocesamiento
-    "sparse_threshold":       0.3,      # fracción máx de ceros/NaN por gen
+    "sparse_threshold":       0.3,      # fraccion max de ceros/NaN por gen
     # CPCA
     "n_outlier_candidates":   8,        # muestras cercanas al origen a examinar
     "tight_radius":           0.10,     # umbral radial primario
     "loose_radius":           0.15,     # umbral radial alternativo
-    # Detección de outliers
-    "outlier_fmm_threshold":   3.0,     # |res. estand.| FMM (Sec. 3.3 suplementario)
-    "max_outlier_fraction":    0.05,    # límite máximo de muestras eliminables
+    # Deteccion de outliers
+    "outlier_fmm_threshold":   3.0,     # |residuo estand.| FMM
+    "max_outlier_fraction":    0.05,    # limite max de muestras eliminables
     # Ajuste FMM
-    "fmm_alpha_grid":         48,       # resolución de la rejilla alpha
-    "fmm_omega_grid":         24,       # resolución de la rejilla omega
-    "fmm_reps":               3,        # iteraciones de refinamiento de la rejilla
-    # Anclas biológicas
+    "fmm_alpha_grid":         48,       # resolucion de la rejilla alpha
+    "fmm_omega_grid":         24,       # resolucion de la rejilla omega
+    "fmm_reps":               3,        # iteraciones de refinamiento
+    # Anclas biologicas
     "anchor_gene":            "ARNTL",  # gen situado en pi (amanecer)
-    "direction_gene":         "DBP",    # gen para verificación de dirección
+    "direction_gene":         "DBP",    # gen para verificacion de direccion
 }
 
-# Nombres de columna de genes por formato de archivo. Los ficheros Parquet
-# suelen almacenar nombres de genes en una columna explícita; CSV/TSV/Excel
-# usan la primera columna por defecto. Añadir entradas aquí si los archivos
-# usan una convención diferente.
+# Nombre de la columna de genes por extension. Parquet suele tener una
+# columna explicita; CSV/TSV usan la primera columna como indice.
 _GENE_COL_DEFAULTS = {
     ".parquet": "gene_id",
-    ".csv":     None,       # None → first column is the index
+    ".csv":     None,
     ".tsv":     None,
     ".txt":     None,
     ".xlsx":    None,
@@ -132,70 +132,89 @@ _GENE_COL_DEFAULTS = {
 
 
 def _resolve_gene_column(data_path: Path, override: str | None) -> str | None:
-    """Detectar automáticamente gene_column por extensión de archivo, con sobreescritura opcional."""
     if override is not None:
         return override
     return _GENE_COL_DEFAULTS.get(data_path.suffix.lower(), None)
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════════════════════════════
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ejecutar el pipeline CIRCUST (Etapas 1-2) con diagnósticos.",
+        description="Ejecutar el algoritmo CIRCUST (Etapas 1-4) y volcar CSVs.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 ejemplos:
-  # Por defecto (matrixIn.parquet, 12 genes core de Larriba)
   python scripts/run_pipeline.py
-
-  # Entrada CSV — columna de genes detectada automáticamente
   python scripts/run_pipeline.py --data data/BA46_glut_sample_no_minmax.csv
-
-  # Conjunto de genes con nombre
   python scripts/run_pipeline.py --core-genes zhang
-
-  # Lista de genes personalizada
-  python scripts/run_pipeline.py --core-genes PER1,PER2,CRY1,CRY2,ARNTL,DBP
+  python scripts/run_pipeline.py --core-genes ARNTL,DBP,NR1D1,PER1,PER2,PER3
 
 conjuntos de genes disponibles: {list(CoreGeneSelector.PRESETS.keys())}
 """,
     )
     parser.add_argument(
         "--data", type=str, default=None,
-        help="Ruta a la matriz de expresión (CSV, TSV, Parquet, Excel). "
+        help="Ruta a la matriz de expresion (CSV, TSV, Parquet, Excel). "
              "Por defecto: data/matrixIn.parquet",
     )
     parser.add_argument(
         "--gene-column", type=str, default=None,
         help="Nombre de la columna identificadora de genes. Se detecta "
-             "automáticamente por extensión si se omite (Parquet → 'gene_id', CSV → primera col).",
+             "automaticamente por extension si se omite (Parquet -> 'gene_id', "
+             "CSV -> primera col).",
     )
     parser.add_argument(
         "--core-genes", type=str, default=None,
-        help=f"Genes core: un conjunto con nombre {list(CoreGeneSelector.PRESETS.keys())} o "
-             "símbolos separados por comas. Por defecto: larriba",
+        help=f"Genes core: preset {list(CoreGeneSelector.PRESETS.keys())} o "
+             "lista separada por comas. Por defecto: circust.",
     )
     parser.add_argument(
         "--label", type=str, default=None,
-        help="Etiqueta del dataset para los títulos de los gráficos. Por defecto: nombre del archivo.",
+        help="Etiqueta del dataset (queda en manifest.json). Por defecto: "
+             "nombre del archivo.",
     )
     parser.add_argument(
         "-o", "--output", type=str, default="output",
         help="Directorio de salida. Por defecto: output/",
     )
+
+    # ── Parametros del algoritmo (5 esenciales) ──────────────────────────
     parser.add_argument(
-        "--dpi", type=int, default=150,
-        help="Resolución de las figuras. Por defecto: 150",
+        "--fmm-method", choices=["base", "stabilized"], default="base",
+        help="Modelo FMM: 'base' (Larriba/Rueda 2019, MLE puro) o "
+             "'stabilized' (power-roughness + KDE von Mises). "
+             "Cuando se usa 'stabilized', CPCA calibra lambda y se hereda "
+             "a TopGenes y RobustOrder. Por defecto: base.",
     )
     parser.add_argument(
-        "--no-plots", action="store_true",
-        help="Omitir la generación de gráficos (solo resultados en texto/CSV).",
+        "--robust-method", choices=["best_k", "aggregate"], default="best_k",
+        help="Como se elige el orden final entre las K repeticiones: "
+             "'best_k' (mejor por R2 mediano) o 'aggregate' (TSP3/HODs). "
+             "Por defecto: best_k.",
+    )
+    parser.add_argument(
+        "--aggregation", choices=["tsp3", "hods"], default="tsp3",
+        help="Metodo de agregacion de ordenes. Solo aplica si "
+             "--robust-method=aggregate. Por defecto: tsp3.",
+    )
+    parser.add_argument(
+        "--n-reps", type=int, default=5,
+        help="Numero K de repeticiones aleatorias en RobustOrder. "
+             "Por defecto: 5.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help="Semilla del RNG (para las selecciones aleatorias de TOP "
+             "en RobustOrder). Por defecto: 42.",
     )
     return parser.parse_args()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Funciones auxiliares
+# Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _banner(msg: str) -> None:
@@ -206,16 +225,105 @@ def _banner(msg: str) -> None:
     print("=" * width)
 
 
-def _save_figure(fig, path: Path, dpi: int) -> None:
-    fig.savefig(str(path), dpi=dpi, bbox_inches="tight", facecolor="white")
-    import matplotlib.pyplot as plt
-    plt.close(fig)
-    print(f"    Saved: {path.name}")
+# Columnas de robust_result.stats_table en el orden esperado.
+_STATS_COLS = [
+    "fmm_M", "fmm_A", "fmm_alpha", "fmm_beta", "fmm_omega",
+    "fmm_pkU", "fmm_pkL", "fmm_pkU_pct", "fmm_pkL_pct",
+    "fmm_s", "fmm_mse", "fmm_r2",
+    "cos_M", "cos_A", "cos_phi",
+    "cos_pk1", "cos_pk2", "cos_pk1_pct", "cos_pk2_pct",
+    "cos_s", "cos_mse", "cos_r2",
+    "np_s", "np_mse", "np_r2",
+]
 
 
-def _save_text(text: str, path: Path) -> None:
-    path.write_text(text, encoding="utf-8")
-    print(f"    Saved: {path.name}")
+def _build_atlas(
+    robust_result,
+    top_result,
+    cpca_result,
+    fmm_method:  str,
+    cfg:         dict,
+) -> pd.DataFrame:
+    """
+    Construye la tabla [M^TOP] del atlas circadiano del tejido
+    (Larriba et al. 2023, Step 4): una fila por gen TOP con sus
+    parametros FMM finales (R^2, A, t_U, omega) + clasificacion
+    day/night, ordenada por R^2 descendente.
+
+    La **agregacion opera a nivel de MUESTRAS** (propuesta del TFG,
+    seccion 2: aplicar la tecnica de Barragan 2015 al orden de muestras):
+    los K reps producen K orderings de muestras, y se consolida en UN
+    orden consenso. Luego se ajusta FMM por gen sobre ese consenso.
+
+    - ``method="best_k"``: usa los parametros de la repeticion seleccionada
+      directamente desde ``stats_table``.
+    - ``method="aggregate"``: el orden consenso (TSP3/HODs sobre los K
+      orderings de muestras) no coincide con ninguna rep individual, asi
+      que **se re-fittea FMM por gen** sobre el orden consenso para
+      obtener los parametros canonicos.
+    """
+    n_top     = len(robust_result.top_gene_names)
+    top_names = list(robust_result.top_gene_names)
+
+    if robust_result.method_used == "best_k":
+        sel   = int(robust_result.selected_rep)
+        block = robust_result.stats_table[sel * n_top : (sel + 1) * n_top]
+        df    = pd.DataFrame(block, columns=_STATS_COLS)
+        raw   = pd.DataFrame({
+            "gene_name":      top_names,
+            "r2_fmm":         df["fmm_r2"].values,
+            "amplitude":      df["fmm_A"].values,
+            "peak_phase_rad": df["fmm_pkU"].values,
+            "omega":          df["fmm_omega"].values,
+        })
+    else:
+        # Re-fittear FMM sobre el orden consenso de MUESTRAS
+        top_matrix_final = top_result.candidate_matrix.iloc[
+            :, robust_result.sample_order
+        ]
+        final_scale = np.asarray(robust_result.circular_scale, dtype=np.float64)
+
+        if fmm_method == "base":
+            from circust.fitting.fmm import FMMModel
+            fmm = FMMModel(
+                length_alpha_grid = cfg["fmm_alpha_grid"],
+                length_omega_grid = cfg["fmm_omega_grid"],
+                num_reps          = cfg["fmm_reps"],
+            )
+        else:
+            from circust.fitting.fmm_stabilized import (
+                StabilizedFMMModel, prepare_dataset,
+            )
+            stab_kwargs: dict = {}
+            if cpca_result.lambda_star is not None:
+                stab_kwargs["lambda_star"] = float(cpca_result.lambda_star)
+            prepared = prepare_dataset(final_scale, **stab_kwargs)
+            fmm      = StabilizedFMMModel(prepared=prepared)
+
+        rows = []
+        for gene in top_names:
+            y   = top_matrix_final.loc[gene].values.astype(np.float64)
+            fit = fmm.fit(y, final_scale)
+            rows.append({
+                "gene_name":      gene,
+                "r2_fmm":         float(fit.r2),
+                "amplitude":      float(fit.params["A"]),
+                "peak_phase_rad": float(fit.peak_time),
+                "omega":          float(fit.params["omega"]),
+            })
+        raw = pd.DataFrame(rows)
+
+    # Postprocesar: pico en horas + clasificacion day/night
+    raw["peak_phase_h"]   = raw["peak_phase_rad"] * 24.0 / (2.0 * np.pi)
+    raw["classification"] = np.where(
+        raw["peak_phase_rad"] < np.pi, "day", "night",
+    )
+    atlas = raw[[
+        "gene_name", "r2_fmm", "amplitude",
+        "peak_phase_rad", "peak_phase_h",
+        "omega", "classification",
+    ]].sort_values("r2_fmm", ascending=False).reset_index(drop=True)
+    return atlas
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -229,33 +337,33 @@ def main() -> None:
 
     # ── Resolver entradas ────────────────────────────────────────────────
     data_path = Path(args.data) if args.data else (PROJECT_ROOT / "data" / "matrixIn.parquet")
-    gene_column    = _resolve_gene_column(data_path, args.gene_column)
-    core_selector  = CoreGeneSelector.from_string(args.core_genes)
-    label          = args.label if args.label else data_path.stem
+    gene_column   = _resolve_gene_column(data_path, args.gene_column)
+    core_selector = CoreGeneSelector.from_string(args.core_genes)
+    label         = args.label if args.label else data_path.stem
 
     output_dir = Path(args.output)
-    results_dir = output_dir / "results"
-    figures_dir = output_dir / "figures"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    results_dir.mkdir(parents=True, exist_ok=True)
-    if not args.no_plots:
-        figures_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── Mostrar configuración ────────────────────────────────────────────
-    _banner("Configuración")
+    # ── Mostrar configuracion ────────────────────────────────────────────
+    _banner("Configuracion")
     print(f"  Archivo de datos : {data_path}")
     print(f"  Columna genes    : {gene_column or '(primera columna)'}")
     print(f"  Preset genes core: {core_selector._preset_name}")
     print(f"  Gen ancla        : {cfg['anchor_gene']}")
-    print(f"  Gen dirección    : {cfg['direction_gene']}")
+    print(f"  Gen direccion    : {cfg['direction_gene']}")
+    print(f"  FMM method       : {args.fmm_method}")
+    print(f"  Robust method    : {args.robust_method}"
+          + (f"  (agregacion: {args.aggregation})"
+             if args.robust_method == "aggregate" else ""))
+    print(f"  K repeticiones   : {args.n_reps}")
+    print(f"  Semilla          : {args.seed}")
     print(f"  Etiqueta         : {label}")
     print(f"  Salida           : {output_dir}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 0 — Cargar datos
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 0: Cargando matriz de expresión")
-
+    _banner("Etapa 0: Cargando matriz de expresion")
     raw_matrix = load_expression_matrix(str(data_path), gene_column=gene_column)
     print(f"  Cargado: {raw_matrix.shape[0]} genes x {raw_matrix.shape[1]} muestras")
 
@@ -263,29 +371,23 @@ def main() -> None:
     # Etapa 1.0 — Preprocesamiento
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.0: Preprocesamiento")
-
-    preprocessor = Preprocessor(
+    prep = Preprocessor(
         sparse_threshold=cfg["sparse_threshold"],
         verbose=True,
-    )
-    prep = preprocessor.run(raw_matrix)
-
-    _save_text(prep.summary(), results_dir / "preprocessing_summary.txt")
+    ).run(raw_matrix)
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 1.1a — Seleccion de genes core
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.1a: Seleccion de Genes Core")
-
     core_result = core_selector.select(prep.expr_norm)
     core_genes  = core_result.genes
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 1.1 — CPCA (ordenamiento circular inicial)
+    # Etapa 1.1 — CPCA + deteccion de outliers
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.1: PCA Circular")
-
-    cpca = CPCA(
+    cpca_result = CPCA(
         core_genes            = core_genes,
         n_outlier_candidates  = cfg["n_outlier_candidates"],
         tight_radius          = cfg["tight_radius"],
@@ -295,225 +397,136 @@ def main() -> None:
         fmm_length_alpha_grid = cfg["fmm_alpha_grid"],
         fmm_length_omega_grid = cfg["fmm_omega_grid"],
         fmm_num_reps          = cfg["fmm_reps"],
+        fmm_method            = args.fmm_method,
         verbose               = True,
-    )
-    cpca_result = cpca.run(prep.expr_norm)
-
-    _save_text(cpca_result.summary(), results_dir / "cpca_summary.txt")
-
-    if not args.no_plots:
-        print("  Generando gráficos CPCA ...")
-
-        fig = plot_variance_explained(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "01_variance_explained.png", args.dpi)
-
-        fig = plot_pc_scatter(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "02_cpca_scatter.png", args.dpi)
-
-        fig = plot_gene_panels(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "03_cpca_gene_panels.png", args.dpi)
-
-    if not args.no_plots:
-        print("  Generando gráficos diagnósticos de outliers ...")
-
-        fig = plot_core_gene_fits(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "04_core_gene_fits.png", args.dpi)
-
-        fig = plot_residual_strips(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "05_residual_strips.png", args.dpi)
-
-        fig = plot_residual_heatmap(cpca_result, title=label)
-        _save_figure(fig, figures_dir / "06_residual_heatmap.png", args.dpi)
+    ).run(prep.expr_norm)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 2 — Ordenamiento preliminar
+    # Etapa 2 — Sincronizador (orden preliminar)
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 2: Ordenamiento Circular Preliminar")
-
     core_genes_found = list(cpca_result.core_genes_found)
-    estimator = CircularSynchronizer(
+    order_result = CircularSynchronizer(
         anchor_gene    = cfg["anchor_gene"],
         direction_gene = cfg["direction_gene"],
         verbose        = True,
-    )
-    order_result = estimator.run(cpca_result, core_genes_found)
-
-    _save_text(order_result.summary(), results_dir / "preliminary_order_summary.txt")
-
-    # ── Exportar resultados clave como CSV ──────────────────────────────
-    peak_df = pd.DataFrame({
-        "gene": order_result.core_genes,
-        "peak_phase": order_result.peak_times,
-        "r2_fmm": order_result.r2_fmm,
-        "classification": [
-            "anchor" if g == "ARNTL"
-            else "direction" if g == "DBP"
-            else "day" if g in order_result.day_genes
-            else "night"
-            for g in order_result.core_genes
-        ],
-    })
-    peak_df.to_csv(results_dir / "core_gene_peaks.csv", index=False)
-    print(f"    Saved: core_gene_peaks.csv")
-
-    r2_df = pd.DataFrame({
-        "gene": order_result.core_genes,
-        "r2_fmm": order_result.r2_fmm,
-    }).sort_values("r2_fmm", ascending=False)
-    r2_df.to_csv(results_dir / "core_gene_r2.csv", index=False)
-    print(f"    Saved: core_gene_r2.csv")
-
-    order_df = pd.DataFrame({
-        "position": np.arange(len(order_result.circular_scale)),
-        "circular_phase": order_result.circular_scale,
-        "sample_index": order_result.sample_order,
-    })
-    order_df.to_csv(results_dir / "sample_order.csv", index=False)
-    print(f"    Saved: sample_order.csv")
+    ).run(cpca_result, core_genes_found)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Etapa 3 — Selección de genes TOP
+    # Etapa 3 — Seleccion de genes TOP
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 3: Selección de Genes TOP")
-
-    top_selector = TopGeneSelector(
-        r2_ori_threshold=0.5,
-        r2_fmm_threshold=0.5,
-        omega_min=0.1,
-        n_sectors=4,
-        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
-        fmm_length_omega_grid=cfg["fmm_omega_grid"],
-        fmm_num_reps=cfg["fmm_reps"],
-        n_jobs=-1,
-        verbose=True,
-    )
-    top_result = top_selector.run(
+    _banner("Etapa 3: Seleccion de Genes TOP")
+    top_result = TopGeneSelector(
+        r2_ori_threshold      = 0.5,
+        r2_fmm_threshold      = 0.5,
+        omega_min             = 0.1,
+        n_sectors             = 4,
+        fmm_length_alpha_grid = cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid = cfg["fmm_omega_grid"],
+        fmm_num_reps          = cfg["fmm_reps"],
+        fmm_method            = args.fmm_method,
+        lambda_star           = cpca_result.lambda_star,   # heredado si stabilized
+        n_jobs                = -1,
+        verbose               = True,
+    ).run(
         expr_norm      = order_result.expr_ordered,
         circular_scale = order_result.circular_scale,
         seed_genes     = core_genes_found,
         sample_order   = order_result.sample_order,
     )
-
-    _save_text(top_result.summary(), results_dir / "top_genes_summary.txt")
-
-    top_df = pd.DataFrame({
-        "gene":     top_result.gene_names,
-        "sector":   top_result.sector_labels,
-        "fmm_peak": top_result.fmm_peaks,
-        "r2_par":   top_result.r2_par,
-        "r2_ori":   top_result.r2_ori,
-        "omega":    top_result.omega,
-    }).sort_values(["sector", "r2_par"], ascending=[True, False])
-    top_df.to_csv(results_dir / "top_genes.csv", index=False)
-    print(f"    Saved: top_genes.csv")
-
-    top_result.candidate_matrix.to_csv(results_dir / "top_matrix.csv")
-    print(f"    Saved: top_matrix.csv")
     print(f"  Matriz TOP: {top_result.candidate_matrix.shape[0]} genes x "
           f"{top_result.candidate_matrix.shape[1]} muestras")
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 4 — Estimacion robusta del orden
     # ─────────────────────────────────────────────────────────────────────
-    _banner("Etapa 4: Estimación Robusta del Orden")
-
-    robust_order = RobustOrderEstimator(
-        n_reps=5,
-        sample_size_fraction=2.0 / 3.0,
-        method="best_k",
-        r2_min=0.5,
-        max_attempts=5000,
-        anchor_gene=cfg["anchor_gene"],
-        direction_gene=cfg["direction_gene"],
-        fmm_length_alpha_grid=cfg["fmm_alpha_grid"],
-        fmm_length_omega_grid=cfg["fmm_omega_grid"],
-        fmm_num_reps=cfg["fmm_reps"],
-        n_jobs=1,
-        seed=42,
-        verbose=True,
-    )
-    robust_result = robust_order.run(
+    _banner("Etapa 4: Estimacion Robusta del Orden")
+    robust_result = RobustOrderEstimator(
+        n_reps               = args.n_reps,
+        sample_size_fraction = 2.0 / 3.0,
+        method               = args.robust_method,
+        aggregation_method   = args.aggregation,
+        r2_min               = 0.5,
+        max_attempts         = 5000,
+        anchor_gene          = cfg["anchor_gene"],
+        direction_gene       = cfg["direction_gene"],
+        fmm_length_alpha_grid= cfg["fmm_alpha_grid"],
+        fmm_length_omega_grid= cfg["fmm_omega_grid"],
+        fmm_num_reps         = cfg["fmm_reps"],
+        fmm_method           = args.fmm_method,
+        lambda_star          = cpca_result.lambda_star,   # heredado si stabilized
+        n_jobs               = 1,
+        seed                 = args.seed,
+        verbose              = True,
+    ).run(
         top_result     = top_result,
         expr_full_norm = order_result.expr_ordered,
         core_genes     = core_genes_found,
     )
 
-    _save_text(robust_result.summary(), results_dir / "robust_order_summary.txt")
-
-    # Exportar selecciones aleatorias
-    sel_df_rows = []
-    for k in range(robust_result.selection_names.shape[0]):
-        for j in range(robust_result.selection_names.shape[1]):
-            sel_df_rows.append({
-                "rep":  k + 1,
-                "gene": robust_result.selection_names[k, j],
-            })
-    pd.DataFrame(sel_df_rows).to_csv(
-        results_dir / "random_selections.csv", index=False
-    )
-    print(f"    Saved: random_selections.csv")
-
-    # Exportar orden final
+    # ─────────────────────────────────────────────────────────────────────
+    # Salida 1: orden de MUESTRAS — UNA FILA POR MUESTRA
+    # ─────────────────────────────────────────────────────────────────────
+    # Es la salida principal del TFG (mejora del orden de muestras via
+    # aggregation de Barragan 2015 aplicada a las K iteraciones de CIRCUST,
+    # seccion 2 de la propuesta). Es lo que se valida contra ground truth
+    # (tiempos reales conocidos o TOD), como hace el paper original en
+    # Fig 5 (skeletal muscle) y Fig 7A (baboons).
+    robust_names = [order_result.expr_ordered.columns[i]
+                    for i in robust_result.sample_order]
+    phases_rad   = np.asarray(robust_result.circular_scale, dtype=np.float64)
+    phases_h     = phases_rad * 24.0 / (2.0 * np.pi)
     pd.DataFrame({
-        "sample_position": np.arange(len(robust_result.circular_scale)),
-        "circular_phase":  robust_result.circular_scale,
-        "sample_index":    robust_result.sample_order,
-    }).to_csv(results_dir / "robust_final_order.csv", index=False)
-    print(f"    Saved: robust_final_order.csv")
+        "sample_name":    robust_names,
+        "circular_phase": phases_rad,   # radianes en [0, 2*pi) — canonico
+        "phase_h":        phases_h,     # horas    en [0, 24)  — interpretable
+    }).to_csv(output_dir / "sample_order.csv", index=False)
+    print(f"    Saved: sample_order.csv  ({len(phases_rad)} muestras)")
 
-    # Exportar tabla de estadisticos
-    stats_cols = (
-        ["fmm_M","fmm_A","fmm_alpha","fmm_beta","fmm_omega",
-         "fmm_pkU","fmm_pkL","fmm_pkU_pct","fmm_pkL_pct",
-         "fmm_s","fmm_mse","fmm_r2",
-         "cos_M","cos_A","cos_phi",
-         "cos_pk1","cos_pk2","cos_pk1_pct","cos_pk2_pct",
-         "cos_s","cos_mse","cos_r2",
-         "np_s","np_mse","np_r2"]
+    # ─────────────────────────────────────────────────────────────────────
+    # Salida 2: [M^TOP] — atlas circadiano del tejido (UNA FILA POR GEN)
+    # ─────────────────────────────────────────────────────────────────────
+    # Salida cientifica canonica de CIRCUST (Larriba et al. 2023, Step 4):
+    # para cada gen TOP, sus parametros FMM finales (R^2, amplitud, peak
+    # phase, omega) y clasificacion day/night. Construido re-ajustando
+    # FMM sobre el orden de muestras consenso (en aggregate) o tomando
+    # los parametros de la rep seleccionada (en best_k).
+    atlas_df = _build_atlas(
+        robust_result = robust_result,
+        top_result    = top_result,
+        cpca_result   = cpca_result,
+        fmm_method    = args.fmm_method,
+        cfg           = cfg,
     )
-    K = robust_result.sample_orders.shape[0]
-    n_top = len(robust_result.top_gene_names)
-    stats_df = pd.DataFrame(robust_result.stats_table, columns=stats_cols)
-    stats_df.insert(0, "gene", np.tile(robust_result.top_gene_names, K))
-    stats_df.insert(0, "rep",  np.repeat(np.arange(1, K + 1), n_top))
-    stats_df.to_csv(results_dir / "robust_stats_table.csv", index=False)
-    print(f"    Saved: robust_stats_table.csv")
-
-    if not args.no_plots:
-        print("  Generando gráficos de ordenamiento ...")
-
-        fig = plot_circular_peaks(order_result, title=label)
-        _save_figure(fig, figures_dir / "07_circular_peaks.png", args.dpi)
-
-        fig = plot_ordered_profiles(order_result, title=label)
-        _save_figure(fig, figures_dir / "08_ordered_profiles.png", args.dpi)
-
-        fig = plot_r2_comparison(order_result, title=label)
-        _save_figure(fig, figures_dir / "09_r2_comparison.png", args.dpi)
-
-        fig = plot_day_night_diagram(order_result, title=label)
-        _save_figure(fig, figures_dir / "10_day_night_diagram.png", args.dpi)
-
-        fig = plot_expression_overview(
-            order_result.expr_ordered,
-            core_genes=order_result.core_genes,
-            circular_scale=order_result.circular_scale,
-            n_top=50,
-            title=label,
-        )
-        _save_figure(fig, figures_dir / "11_expression_heatmap.png", args.dpi)
+    atlas_df.to_csv(output_dir / "circust_atlas.csv", index=False)
+    print(f"    Saved: circust_atlas.csv  ({len(atlas_df)} genes TOP)")
 
     # ─────────────────────────────────────────────────────────────────────
-    # Resumen compuesto
+    # Manifest (config + semilla) para reproducibilidad
     # ─────────────────────────────────────────────────────────────────────
-    if not args.no_plots:
-        _banner("Generando figura resumen del pipeline")
-
-        fig = plot_pipeline_summary(
-            cpca_result, order_result,
-            title=label,
-        )
-        _save_figure(fig, figures_dir / "12_pipeline_summary.png", args.dpi)
+    manifest = {
+        "input": {
+            "data_path":   str(data_path),
+            "label":       label,
+            "gene_column": gene_column,
+            "core_preset": core_selector._preset_name,
+            "core_genes":  list(core_genes),
+        },
+        "config":    cfg,
+        "algorithm": {
+            "fmm_method":    args.fmm_method,
+            "robust_method": args.robust_method,
+            "aggregation":   (args.aggregation
+                              if args.robust_method == "aggregate" else None),
+            "n_reps":        args.n_reps,
+            "lambda_star":   cpca_result.lambda_star,
+        },
+        "seed":      args.seed,
+    }
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    print(f"  Saved: manifest.json")
 
     # ─────────────────────────────────────────────────────────────────────
     # Informe final
@@ -526,7 +539,7 @@ def main() -> None:
     print(f"  Genes (filtrados)  : {prep.n_genes_out}")
     print(f"  Muestras (limpias) : {cpca_result.expr_norm_final.shape[1]}")
     print(f"  Outliers eliminados: {len(cpca_result.samples_dropped)}")
-    print(f"  Inversión direcc.  : {order_result.direction_flipped}")
+    print(f"  Inversion direcc.  : {order_result.direction_flipped}")
     print(f"  Genes tras ORI     : {top_result.n_after_ori}")
     print(f"  Genes tras FMM     : {top_result.n_after_fmm}")
     print(f"  Genes TOP finales  : {len(top_result.gene_names)}")
@@ -535,17 +548,6 @@ def main() -> None:
     print(f"  Flips de orient.   : {int(robust_result.direction_flipped.sum())}")
     print(f"  Salida             : {output_dir.resolve()}")
     print(f"  Tiempo transcurrido: {elapsed:.1f}s")
-    print()
-
-    # Resumen de picos de genes core
-    print("  Picos de genes core (marco biológico):")
-    print("  " + "-" * 44)
-    for i, gene in enumerate(order_result.core_genes):
-        phase = order_result.peak_times[i]
-        r2 = order_result.r2_fmm[i]
-        cls = peak_df.loc[peak_df["gene"] == gene, "classification"].values[0]
-        print(f"    {gene:<8s}  phase={phase:5.3f} rad  R2={r2:.3f}  [{cls}]")
-    print()
 
 
 if __name__ == "__main__":
