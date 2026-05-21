@@ -26,6 +26,7 @@ Estadisticos individuales:
     - pct_within(pred, true, threshold_h, period)      %< Xh
     - auc_error_cdf(pred, true, period)                AUC del CDF
     - circular_correlation(pred, true, period)         CCC Jammalamadaka-Sarma
+    - circular_correlation_trimmed(pred, true, period) rTrim (Mahmood 2022)
 
 Atajo:
     - evaluate_all(pred, true, period, ...)            todas las metricas en dict
@@ -220,8 +221,6 @@ def median_absolute_error(
 ) -> float:
     """
     Mediana del error absoluto circular (MedAE), en horas.
-
-    Robusto a outliers — recomendada como metrica principal del paper DCPR.
     """
     return float(np.median(circular_abs_diff(predicted, true, period)))
 
@@ -265,8 +264,6 @@ def auc_error_cdf(
         - ``AUC = 1.0``: predictor perfecto (todos los errores = 0).
         - ``AUC ~ 0.5``: predictor aleatorio (errores distribuidos
           uniformemente en ``[0, period/2]``).
-
-    Es la metrica principal de resumen en el paper DCPR (Han et al. 2026).
     """
     errors = circular_abs_diff(predicted, true, period)
     n      = errors.size
@@ -335,6 +332,124 @@ def circular_correlation(
     return num / den if den > 0.0 else 0.0
 
 
+def _circular_trimmed_mean_with_mask(
+    theta_rad:     np.ndarray,
+    trim_fraction: float,
+) -> tuple[float, np.ndarray]:
+    """
+    Media circular *trimmed*: la media circular estandar tras eliminar la
+    proporcion ``trim_fraction`` de observaciones cuya **distancia angular**
+    a la media circular inicial sea mayor (el equivalente circular del
+    trimmed mean lineal).
+
+    En datos circulares no existen "valores maximos" o "minimos" porque
+    ``0 = 2pi``, asi que Mahmood (2022) propone podar las observaciones mas
+    alejadas del grueso de los datos, medido por distancia angular a la
+    media circular inicial.
+
+    Devuelve la media trimmed (en radianes, en ``(-pi, pi]``) y la mascara
+    booleana de observaciones conservadas, util para sincronizar la poda
+    entre dos variables emparejadas.
+    """
+    n = theta_rad.size
+    p = int(np.floor(trim_fraction * n))
+
+    mu_init = float(
+        np.arctan2(np.sin(theta_rad).sum(), np.cos(theta_rad).sum())
+    )
+
+    if p <= 0:
+        return mu_init, np.ones(n, dtype=bool)
+
+    diff = theta_rad - mu_init
+    diff = np.arctan2(np.sin(diff), np.cos(diff))   # wrap a (-pi, pi]
+    dist = np.abs(diff)
+
+    keep_idx        = np.argsort(dist)[: n - p]
+    kept            = np.zeros(n, dtype=bool)
+    kept[keep_idx]  = True
+
+    theta_kept = theta_rad[kept]
+    mu_trim    = float(
+        np.arctan2(np.sin(theta_kept).sum(), np.cos(theta_kept).sum())
+    )
+    return mu_trim, kept
+
+
+def circular_correlation_trimmed(
+    predicted:     np.ndarray,
+    true:          np.ndarray,
+    period:        float = PERIOD_HOURS,
+    trim_fraction: float = 0.10,
+) -> float:
+    """
+    Coeficiente de correlacion circular-circular **robusto** basado en la
+    **media circular trimmed** (rTrim, Mahmood 2022).
+
+    Adaptacion robusta del CCC de Jammalamadaka & SenGupta donde las medias
+    circulares ``mu_1, mu_2`` se sustituyen por **medias trimmed**: en cada
+    variable se descartan las observaciones cuya distancia angular a la
+    media inicial sea mayor, y la suma se calcula sobre los pares en los
+    que **ambas** componentes sobreviven a la poda.
+
+    .. math::
+
+        r_{Trim} =
+        \\frac{\\sum_{i \\in K} \\sin(\\theta_i - \\bar\\theta_{Trim})
+                              \\, \\sin(\\varphi_i - \\bar\\varphi_{Trim})}
+             {\\sqrt{\\sum_{i \\in K} \\sin^2(\\theta_i - \\bar\\theta_{Trim})
+                     \\, \\sum_{i \\in K} \\sin^2(\\varphi_i - \\bar\\varphi_{Trim})}}
+
+    donde ``K`` es la interseccion de las mascaras de inliers de cada variable
+    (un par se conserva solo si ambas componentes lo son).
+
+    Parameters
+    ----------
+    predicted, true
+        Fases en horas, en ``[0, period)``.
+    period
+        Periodo del ritmo, en horas (24 por defecto).
+    trim_fraction
+        Proporcion :math:`\\delta \\in [0, 0.5]` de observaciones a podar en
+        cada variable. ``0.10`` es un valor tipico (Mahmood 2022 reporta
+        resultados estables hasta 0.20-0.25).
+
+    Notas
+    -----
+    - El paper original (Eq. 12) tiene un aparente erratum: el limite de la
+      segunda suma del denominador aparece como ``n`` pero por consistencia
+      dimensional debe ser ``n - p``. Aqui se usa el mismo conjunto ``K``
+      en numerador y denominador (lo coherente con la idea de "trimmed").
+    - El criterio de poda es por distancia angular a la media circular
+      inicial de cada variable (Mahmood 2022, sec. 4.2). Se descarta el par
+      cuando alguna de las dos componentes es outlier.
+    - Para ``trim_fraction = 0`` se recupera el CCC clasico de
+      :func:`circular_correlation`.
+    """
+    if not 0.0 <= trim_fraction < 0.5:
+        raise ValueError("trim_fraction debe estar en [0, 0.5)")
+
+    predicted = np.asarray(predicted, dtype=np.float64)
+    true      = np.asarray(true,      dtype=np.float64)
+
+    p_rad = 2.0 * np.pi * predicted / period
+    t_rad = 2.0 * np.pi * true      / period
+
+    mu_p, mask_p = _circular_trimmed_mean_with_mask(p_rad, trim_fraction)
+    mu_t, mask_t = _circular_trimmed_mean_with_mask(t_rad, trim_fraction)
+
+    kept = mask_p & mask_t
+    if not np.any(kept):
+        return 0.0
+
+    sp = np.sin(p_rad[kept] - mu_p)
+    st = np.sin(t_rad[kept] - mu_t)
+
+    num = float((sp * st).sum())
+    den = float(np.sqrt((sp ** 2).sum() * (st ** 2).sum()))
+    return num / den if den > 0.0 else 0.0
+
+
 # ===========================================================================
 # API de conveniencia
 # ===========================================================================
@@ -365,7 +480,7 @@ def evaluate_all(
     Returns
     -------
     dict con claves:
-        - ``MedAE``, ``SDAE``, ``AUC``, ``CCC``
+        - ``MedAE``, ``SDAE``, ``AUC``, ``CCC``, ``rTrim``
         - ``pct_within_Xh`` para cada umbral
         - ``R_bar_true``, ``R_bar_pred``   (diagnostico de estabilidad)
         - ``n``                              (numero de muestras evaluadas)
@@ -384,6 +499,7 @@ def evaluate_all(
         "SDAE":       std_absolute_error(pred, true_a, period),
         "AUC":        auc_error_cdf(pred, true_a, period),
         "CCC":        circular_correlation(pred, true_a, period),
+        "rTrim":      circular_correlation_trimmed(pred, true_a, period),
         "R_bar_true": mean_resultant_length(true_a, period),
         "R_bar_pred": mean_resultant_length(pred,   period),
         "n":          int(true_a.size),
