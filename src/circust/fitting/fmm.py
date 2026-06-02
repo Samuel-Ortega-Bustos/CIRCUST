@@ -9,7 +9,7 @@ Modelo matematico
 
 El termino interno  Phi(t) = beta + 2*atan(omega*tan((t - alpha)/2))  es una
 transformacion de Mobius del circulo.  Cuando omega = 1 se reduce a un
-simple desfase. Cuando omega -> 0 la forma de onda se aproxima a un coseno
+simple desfase. Cuando omega -> 1 la forma de onda se aproxima a un coseno
 (Cosinor). La ventaja clave sobre Cosinor es que omega controla la *asimetria
 de la forma de onda*: el modelo puede representar picos asimetricos presentes
 en datos circadianos reales.
