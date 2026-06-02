@@ -257,44 +257,173 @@ El desarrollo de este trabajo se apoya en competencias adquiridas en varias asig
 % Las bases matemáticas formales de CPCA y del modelo FMM se desarrollan en la
 % última sección (en desarrollo).
 
-\section{El algoritmo CIRCUST: CPCA y modelo FMM}
-CIRCUST \cite{larriba2023} es una metodología para la reconstrucción del orden temporal de los ritmos moleculares basada en estadística clásica. A diferencia de las aproximaciones de caja negra, se apoya en una base estadística transparente y se organiza en dos procesos principales:
+\section{El algoritmo CIRCUST}
+\label{sec:circust}
+
+CIRCUST (\textit{CIRCular-robUST}) \cite{larriba2023} es una metodología para reconstruir el orden temporal de los ritmos moleculares a partir de una matriz de expresión génica que carece de etiquetas temporales fiables. A diferencia de las aproximaciones de caja negra basadas en redes neuronales, CIRCUST se sustenta íntegramente en estadística clásica e interpretable: cada etapa del procedimiento admite una lectura estadística directa y produce magnitudes con significado biológico, como la fase asignada a cada muestra, el instante de máxima expresión de un gen (su pico), su amplitud o su grado de ritmicidad. Esta transparencia es, precisamente, la que permite en este trabajo intervenir y refinar etapas concretas del método sin necesidad de tratarlo como un bloque opaco.
+
+Formalmente, se parte de una matriz de expresión $\mathbf{X}\in\mathbb{R}^{G\times n}$, en la que las $G$ filas corresponden a genes (del orden de decenas de miles) y las $n$ columnas a las muestras. El objetivo es doble: asignar a cada muestra $i$ una fase $\varphi_i\in[0,2\pi)$ que refleje su posición dentro del ciclo de 24 horas y, a partir del orden inducido por esas fases, caracterizar qué genes son rítmicos y cuándo alcanzan su pico. Conviene recordar (véase la Introducción) que la fase estimada es de naturaleza \emph{circular}: queda determinada salvo una rotación global y un sentido de giro, que deben fijarse después mediante información biológica externa.
+
+El método se organiza como una \textbf{secuencia de etapas bien delimitadas} (Figura~\ref{fig:pipeline}), cada una con una entrada y una salida claras. Esta descomposición no es meramente expositiva: es la que da pie a la re-implementación modular descrita en el Capítulo~\ref{cap:implementacion}, donde cada etapa se aísla en un componente independiente. A continuación se describe primero el flujo de trabajo de forma general y, después, se detallan sus dos pilares estadísticos, el Análisis de Componentes Principales Circular (CPCA) y el modelo FMM además de las aportaciones que CIRCUST introduce frente a los métodos previos.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.7cm,
+    stage/.style={draw, rounded corners, minimum width=8.2cm, minimum height=0.85cm, align=center, font=\small, fill=blue!6},
+    io/.style={font=\footnotesize\itshape, text=gray!60!black, align=left},
+]
+\node[stage] (prep) {\textbf{1. Preprocesamiento}\\ Filtrado de genes poco informativos + Normalización min--max};
+\node[stage, below=of prep] (cpca) {\textbf{2. Ordenación circular preliminar (CPCA)}\\ Proyección de los genes reloj sobre el círculo unidad + Detección de \textit{outliers}};
+\node[stage, below=of cpca] (sync) {\textbf{3. Sincronización biológica}\\ Rotación y orientación del orden mediante genes ancla o automática};
+\node[stage, below=of sync] (top) {\textbf{4. Selección de genes TOP}\\ Aplicación de filtros de ritmicidad (ORI + FMM/FMM robusto) y cobertura circular};
+\node[stage, below=of top] (robust) {\textbf{5. Estimación robusta del orden}\\ $K$ remuestreos + agregación de órdenes circulares/Best K};
+\node[stage, below=of robust, fill=gray!10] (out) {\textbf{Salida}\\ Orden temporal estimado de las muestras + Atlas circadiano del tejido};
+
+\draw[->] (prep) -- (cpca);
+\draw[->] (cpca) -- (sync);
+\draw[->] (sync) -- (top);
+\draw[->] (top) -- (robust);
+\draw[->] (robust) -- (out);
+\end{tikzpicture}
+\caption[Flujo de trabajo del algoritmo CIRCUST.]{Flujo de trabajo del algoritmo CIRCUST. Cada etapa transforma la salida de la anterior; los dos pilares estadísticos son el CPCA (etapa 2) y el modelo FMM, presente en las etapas 2, 4 y 5.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Visión general del flujo de trabajo}
+\label{subsec:flujo}
+
+Las etapas que componen el algoritmo son las siguientes:
 
 \begin{enumerate}
-    \item \textbf{Análisis de Componentes Principales Circulares (CPCA):} CIRCUST selecciona un subconjunto de genes reloj centrales y les aplica una reducción de dimensionalidad basada en CPCA \cite{scholz2007}. Al extraer los dos primeros componentes principales, proyecta las muestras sobre el plano definido por el círculo unidad, lo que proporciona un orden circular preliminar entre todas ellas.
+    \item \textbf{Preprocesamiento:} Se descartan los genes poco informativos, es decir, aquellos con una fracción de valores nulos o ausentes por encima de un umbral especificado y se aplica una normalización \textit{min--max} gen a gen, que lleva la expresión de cada gen al intervalo $[-1,1]$. Con ello todos los genes contribuyen en una escala común y se evita que los de mayor varianza absoluta dominen el análisis posterior.
 
-    \item \textbf{Ajuste y selección de genes mediante ORI y FMM:} una vez fijado el orden circular preliminar, CIRCUST modela las curvas de expresión génica. El modelo armónico clásico \textbf{Cosinor} \cite{cosinor} resulta demasiado rígido para los patrones asimétricos típicos del transcriptoma, y su extensión multicomponente tiende al sobreajuste (\textit{overfitting}). Frente a él, CIRCUST recurre a dos modelos más flexibles: el enfoque no paramétrico \textbf{ORI} (\textit{Order Restricted Inference}) \cite{larribaORI}, que describe las oscilaciones mediante restricciones de desigualdad sin imponer una forma funcional rígida, y el modelo paramétrico \textbf{FMM} (\textit{Frequency Modulated Möbius}) \cite{fmmAlgorithm}, que deforma la onda cosenoidal para ajustar expresiones asimétricas y complejas conservando una interpretación directa de la fase oscilatoria. La bondad de ajuste de ambos modelos, medida por sus respectivos coeficientes $R^2$, se emplea de forma conjunta para seleccionar los \textit{genes top}: aquellos cuya expresión es bien explicada tanto por ORI como por FMM y que, por tanto, exhiben un patrón rítmico fiable sobre el que sustentar la estimación del orden temporal.
+    \item \textbf{Ordenación circular preliminar mediante CPCA:} Sobre un subconjunto reducido de \emph{genes reloj} centrales se aplica un Análisis de Componentes Principales Circular \cite{scholz2007}. Los dos primeros componentes proyectan cada muestra sobre el plano, y su posición angular respecto al origen proporciona un primer orden circular de todas las muestras. En esta misma etapa se detectan y eliminan muestras anómalas (\textit{outliers}).
+
+    \item \textbf{Sincronización biológica:} El orden que devuelve el CPCA es correcto salvo una rotación y un sentido de giro arbitrarios. Esta etapa fija ambos grados de libertad anclando la escala a genes de fase conocida, de modo que el orden circular pase a estar alineado con el tiempo biológico real.
+
+    \item \textbf{Selección de genes TOP:} No todos los genes son rítmicos. Esta etapa identifica el subconjunto de genes que oscilan de forma fiable sobre el orden estimado, combinando dos criterios de bondad de ajuste (los modelos ORI y FMM) y exigiendo que sus picos cubran de forma razonable todo el ciclo.
+
+    \item \textbf{Estimación robusta del orden:} Para reducir la dependencia de un único subconjunto de genes, el orden se reestima $K$ veces sobre remuestreos de los genes TOP y los resultados se consolidan en un orden de consenso. Esta etapa concentra una de las aportaciones del trabajo (que se detallan más adelante en este mismo capítulo) y se apoya en técnicas de agregación de órdenes circulares.
 \end{enumerate}
 
+El resultado final es, por un lado, el \textbf{orden temporal de las muestras} (una fase $\varphi_i\in[0,2\pi)$, traducible a horas) y, por otro, el \textbf{atlas circadiano} del tejido: para cada gen rítmico, sus parámetros estimados (amplitud, fase del pico, asimetría y bondad de ajuste).
+
+\subsection{Ordenación circular mediante CPCA}
+\label{subsec:cpca-intro}
+
+El primer pilar de CIRCUST es la obtención de un orden circular preliminar. En lugar de aplicar el Análisis de Componentes Principales (PCA) a los miles de genes de la matriz, CIRCUST lo restringe a un conjunto reducido de \emph{genes reloj} bien caracterizados (por defecto, los doce genes del \textit{core clock}: \textit{PER1--3}, \textit{CRY1--2}, \textit{ARNTL}, \textit{CLOCK}, \textit{NR1D1}, \textit{RORA}, \textit{DBP}, \textit{TEF} y \textit{STAT3}). La razón es estadística: estos genes son rítmicos por construcción biológica, de modo que la principal fuente de variación entre sus perfiles es, justamente, la hora del día. Concentrar el PCA en ellos hace que las primeras componentes capturen la señal circadiana en vez del ruido de fondo.
+
+A partir de la matriz normalizada de genes reloj, el CPCA extrae las dos primeras componentes principales y trata sus puntuaciones para cada muestra $i$ como coordenadas en el plano, $(\text{PC1}_i, \text{PC2}_i)$. La posición angular de cada muestra respecto al origen define su fase preliminar:
+\begin{equation}
+    \varphi_i = \operatorname{atan2}(\text{PC2}_i,\ \text{PC1}_i) \bmod 2\pi,
+    \qquad
+    \rho_i = \sqrt{\text{PC1}_i^{2} + \text{PC2}_i^{2}}\,,
+    \label{eq:cpca-phi}
+\end{equation}
+donde $\rho_i$ es la distancia al origen. Ordenando las muestras por $\varphi_i$ se obtiene el orden circular preliminar. La interpretación geométrica es directa: si la expresión de los genes reloj oscila a lo largo del día, las muestras se disponen sobre una circunferencia y su ángulo refleja el momento del ciclo en que fueron tomadas. La distancia $\rho_i$ actúa además como medida de fiabilidad: una muestra muy próxima al origen ($\rho_i\approx 0$) no tiene una fase bien definida y es candidata a \textit{outlier}. CIRCUST descarta tales muestras combinando este criterio radial con un segundo criterio basado en residuos atípicos del ajuste rítmico, y reejecuta el CPCA sobre los datos depurados. La formalización de la variante circular del PCA y la justificación de la proyección~\eqref{eq:cpca-phi} se desarrollan en la Sección~\ref{sec:fundamentos}.
+
+\subsection{Sincronización con el tiempo biológico}
+\label{subsec:sync-intro}
+
+El orden de la ecuación~\eqref{eq:cpca-phi} es \emph{circular}, y como tal queda indeterminado en dos aspectos: el origen ($\varphi=0$ puede caer en cualquier punto del ciclo) y el sentido de avance (horario o antihorario son a priori equivalentes). Recuperar el tiempo biológico real exige fijar ambos. CIRCUST lo resuelve anclando la escala a genes de fase conocida: sitúa el pico de un \emph{gen ancla} de fase bien caracterizada (por defecto \textit{ARNTL}) en una posición de referencia de la escala, y emplea un segundo \emph{gen de dirección} (por defecto \textit{DBP}) para decidir la orientación, invirtiendo el sentido de giro cuando su pico cae en la mitad incorrecta del ciclo. Tras esta operación, el orden circular deja de ser relativo y pasa a estar sincronizado con el reloj biológico. Esta etapa es, además, una de las que el presente trabajo amplía, al avanzar hacia una selección automática del ancla (más adelante en este mismo capítulo).
+
+\subsection{Modelado de la ritmicidad: del Cosinor al modelo FMM}
+\label{subsec:fmm-intro}
+
+Una vez ordenadas las muestras, CIRCUST modela la curva de expresión de cada gen a lo largo del ciclo para decidir si es rítmico y, en caso afirmativo, estimar sus parámetros. El enfoque clásico para datos circadianos es el modelo \textbf{Cosinor} \cite{cosinor}, que ajusta una sinusoide:
+\begin{equation}
+    y(t) = M + A\cos(t - \phi) + \varepsilon,
+    \label{eq:cosinor}
+\end{equation}
+donde $M$ es el nivel medio (\textit{mesor}), $A$ la amplitud y $\phi$ la fase del pico (\textit{acrófase}). Su limitación es la rigidez: la ecuación~\eqref{eq:cosinor} impone una onda perfectamente simétrica, mientras que la expresión de muchos genes circadianos presenta picos agudos y valles anchos (o viceversa). Forzar una sinusoide sobre esos perfiles asimétricos sesga la estimación del pico, y la alternativa habitual es añadir armónicos, gana flexibilidad a costa de sobreajustar el ruido.
+
+CIRCUST adopta en su lugar el modelo \textbf{FMM} (\textit{Frequency Modulated Möbius}) \cite{fmmAlgorithm}, que introduce la asimetría sin renunciar a la interpretabilidad. El FMM deforma el argumento del coseno mediante una transformación de Möbius del círculo:
+\begin{equation}
+    y(t) = M + A\cos\!\Big(\beta + 2\arctan\!\big(\omega\,\tan\tfrac{t-\alpha}{2}\big)\Big) + \varepsilon,
+    \label{eq:fmm}
+\end{equation}
+con $M$ el nivel medio, $A>0$ la amplitud, $\alpha$ la localización de la región del pico, $\beta$ un parámetro de forma y $\omega\in(0,1]$ el parámetro que gobierna la \emph{asimetría} de la onda. El comportamiento de $\omega$ es la clave del modelo: cuando $\omega=1$ la transformación de Möbius se reduce a la identidad y la ecuación~\eqref{eq:fmm} recupera una onda cosenoidal simétrica, es decir, el modelo Cosinor es un caso particular del FMM, mientras que al disminuir $\omega$ hacia $0$ la onda se vuelve progresivamente más asimétrica y apuntada. De este modo, un único parámetro adicional permite cubrir desde el coseno simétrico hasta picos marcadamente agudos, conservando una lectura directa de la fase y la amplitud. Las propiedades de la transformación de Möbius y el procedimiento de estimación de~\eqref{eq:fmm} se detallan en la Sección~\ref{sec:fundamentos}.
+
+\subsection{Selección de genes rítmicos y orden robusto}
+\label{subsec:topgenes-intro}
+
+La calidad del orden final depende de que se construya sobre genes genuinamente rítmicos. CIRCUST cuantifica la ritmicidad de cada gen mediante coeficientes de determinación $R^2$, que miden la fracción de variabilidad explicada por el ajuste rítmico,
+\begin{equation}
+    R^2 = 1 - \frac{\sum_i \big(y_i - \hat{y}_i\big)^2}{\sum_i \big(y_i - \bar{y}\big)^2},
+    \label{eq:r2}
+\end{equation}
+y combina dos modelos complementarios. Por un lado, el enfoque no paramétrico \textbf{ORI} (\textit{Order Restricted Inference}) \cite{larribaORI}, que describe la oscilación mediante restricciones de desigualdad (un patrón unimodal de subida y bajada) sin imponer una forma funcional concreta, el modelo paramétrico FMM de la ecuación~\eqref{eq:fmm}. Se seleccionan como \textbf{genes TOP} aquellos cuya expresión es bien explicada por ambos modelos ($R^2$ por encima de un umbral especificado en cada uno) y que, además, no producen ondas degeneradas (se exige un valor mínimo de $\omega$). Para que el orden quede bien determinado a lo largo de todo el ciclo se impone también que los picos de los genes seleccionados cubran de forma equilibrada las distintas regiones de la circunferencia. El uso conjunto de un criterio no paramétrico (ORI) y otro paramétrico (FMM) hace la selección más exigente: solo sobreviven los genes cuyo carácter rítmico es robusto frente al tipo de modelo empleado.
+
+Finalmente, para que la estimación no dependa de un subconjunto concreto de genes, CIRCUST reestima el orden sobre varios remuestreos de los genes TOP y consolida los resultados en un orden de consenso. El refinamiento de esta última etapa, mediante técnicas de agregación de órdenes circulares, constituye una de las aportaciones de este trabajo y se desarrolla más adelante en este mismo capítulo.
+
+\subsection{Aportaciones de CIRCUST frente a los métodos previos}
+\label{subsec:aportaciones-circust}
+
+Una vez descrito el flujo de trabajo, conviene situar a CIRCUST respecto a los métodos que lo precedieron, que se detallan en la Sección~\ref{sec:otros-metodos}. Las diferencias no son solo de rendimiento, sino de filosofía e implementación y pueden agruparse en cuatro aportaciones.
+
+\paragraph{Transparencia e interpretabilidad estadística.} La aportación más característica de CIRCUST es que cada etapa es un procedimiento estadístico con una lectura explícita. Las componentes de la ecuación~\eqref{eq:cpca-phi} son las direcciones de máxima varianza de los genes reloj, los parámetros de la ecuación~\eqref{eq:fmm} son la amplitud, la fase y la asimetría de cada gen y el $R^2$ de la ecuación~\eqref{eq:r2} es una bondad de ajuste interpretable. Frente a ello, los métodos basados en \textit{autoencoders} como CYCLOPS o PENN comprimen la señal en un espacio latente cuyos pesos no admiten una interpretación biológica directa: aciertan a ordenar las muestras, pero no ofrecen una trazabilidad estadística de \emph{por qué} lo hacen. Esta transparencia tiene además una consecuencia práctica determinante para este trabajo: permite intervenir, sustituir o reforzar etapas concretas (por ejemplo, la función de pérdida del ajuste FMM o la regla de sincronización) sin desmontar el método completo.
+
+\paragraph{Descomposición modular del problema.} CIRCUST aborda la reconstrucción del orden temporal descomponiéndola en subproblemas estadísticos bien delimitados; reducción de dimensionalidad, sincronización, selección de genes y agregación de órdenes. En lugar de resolverla de un solo paso con un modelo monolítico, como hace un autoencoder entrenado de extremo a extremo. Esta modularidad conceptual facilita razonar sobre cada etapa por separado, diagnosticar dónde falla la estimación y reemplazar componentes de forma aislada. Es también el principio que vertebra la re-implementación desarrollada en este trabajo (Capítulo~\ref{cap:implementacion}), que materializa cada etapa en un módulo independiente, frente al \textit{script} monolítico de la versión original.
+
+\paragraph{Flexibilidad del modelo FMM frente a la rigidez del Cosinor.} A diferencia del enfoque clásico Cosinor (ecuación~\eqref{eq:cosinor}), que impone una sinusoide simétrica, el modelo FMM (ecuación~\eqref{eq:fmm}) captura los picos asimétricos característicos del transcriptoma a través del parámetro $\omega$, recuperando el coseno como caso particular ($\omega=1$). Logra así un equilibrio que los armónicos múltiples no alcanzan: gana flexibilidad para representar formas de onda complejas sin incurrir en el sobreajuste que provoca añadir términos, y conserva una interpretación directa de la fase del pico, que es precisamente la magnitud de interés biológico.
+
+\paragraph{Sincronización explícita con el tiempo biológico.} CIRCUST incorpora una etapa dedicada a alinear el orden circular indeterminado en origen y sentido con el reloj biológico, mediante genes ancla de fase conocida (Sección~\ref{subsec:sync-intro}). Este paso resuelve de forma explícita y trazable un problema que los métodos previos tratan de manera implícita o lo dejan sin abordar: los \textit{autoencoders} (CYCLOPS, PENN) entregan una fase relativa que requiere realineamiento posterior, y CHIRAL afronta la coherencia entre tejidos de un mismo donante pero no la sincronización con un marco temporal absoluto a partir de genes de referencia. Disponer de esta etapa como un componente propio es, además, lo que hace viable extenderla hacia una selección automática del ancla, una de las aportaciones de este trabajo.
+
+\paragraph{Otras observaciones.} Conviene señalar, por último, dos rasgos transversales. El primero es la \emph{robustez}, recogida en el propio nombre del método (\textit{CIRCular-robUST}): la detección de \textit{outliers} en la etapa de CPCA y la reestimación del orden sobre múltiples remuestreos de genes buscan que el resultado no dependa de muestras anómalas ni de una selección concreta de genes. El segundo es su \emph{aplicabilidad en escenarios de pocos datos}: al no requerir el entrenamiento de una red neuronal, CIRCUST no sufre el sobreajuste típico de esos modelos cuando el número de muestras es reducido, y opera sobre un solo tejido sin necesitar la estructura multi-tejido que CHIRAL aprovecha. Estos rasgos lo hacen especialmente adecuado para las cohortes pequeñas y heterogéneas habituales en transcriptómica humana.
+
 \section{Otros métodos de estimación del orden temporal}
-En paralelo a los métodos fundamentados en la estadística clásica, han ganado tracción las aproximaciones basadas en \textit{Machine Learning}, entre las que destaca el algoritmo \textbf{CYCLOPS} (\textit{CYclic Ordering by Periodic Structure}) \cite{CYCLOPS} y su evolución, CYCLOPS 2.0 \cite{CYCLOPS2}.
+\label{sec:otros-metodos}
 
-CYCLOPS delega la reducción de dimensionalidad en redes neuronales artificiales, concretamente en \textit{autoencoders}. Sus características principales son:
+CIRCUST no es el único método que aborda la reconstrucción del orden temporal. Conviene situarlo frente a las principales alternativas, presentadas ya de forma previa en la Introducción, ahora con algo más de detalle pero sin entrar en su formulación completa. El propósito es entender en qué se distinguen, qué supuestos hacen y dónde residen sus limitaciones, lo que justifica las aportaciones de este trabajo.
 
-\begin{itemize}
-    \item \textbf{Cuello de botella circular (\textit{Circular Bottleneck Autoencoder}):} un autoencoder estándar comprime los datos de entrada en un espacio latente lineal para luego reconstruirlos. La innovación de CYCLOPS es forzar a la red a comprimir la varianza rítmica de la expresión génica en un espacio latente compuesto por un único nodo circular, es decir, una fase entre 0 y $2\pi$.
-    \begin{figure}[htbp]
+Una primera distinción separa los enfoques \emph{supervisados} de los \emph{no supervisados}. Los métodos supervisados como ZeitZeiger \cite{zeitzeiger2016} o TimeSignature \cite{timesignature2018} aprenden la relación entre expresión y hora del día a partir de un conjunto de entrenamiento con etiquetas temporales conocidas y predicen después la fase de muestras nuevas. Son precisos cuando se dispone de ese material de entrenamiento, pero resultan inaplicables al escenario que motiva este trabajo: en tejido humano post-mortem no existen etiquetas temporales fiables con las que entrenar. Por ello el interés se concentra en los métodos \emph{no supervisados}, que reconstruyen el orden a partir únicamente de la estructura interna de los datos de expresión. Dentro de estos, la familia dominante es la basada en redes neuronales, junto a la de CIRCUST, de base estadística clásica.
+
+\subsection{Métodos basados en \textit{autoencoders}: CYCLOPS y PENN}
+\label{subsec:autoencoders}
+
+\textbf{CYCLOPS} (\textit{CYclic Ordering by Periodic Structure}) \cite{CYCLOPS} es el método de referencia de esta familia. Su punto de partida es una observación clásica sobre los datos de expresión periódicos: al descomponerlos en valores singulares se obtienen unos patrones característicos (los \textit{eigengenes}), y los primeros de ellos se comportan como oscilaciones sinusoidales desfasadas entre sí. Representadas dos de esas oscilaciones una frente a otra, las muestras se disponen aproximadamente sobre una \emph{elipse}, y su posición angular sobre esa elipse proporciona el orden de las muestras dentro del ciclo, con independencia de la hora real de recogida.
+
+CYCLOPS aprende esa estructura elíptica mediante un \textit{autoencoder}: una red neuronal entrenada para reproducir en su salida la misma entrada que recibe, obligada a comprimir la información en una capa intermedia (\textit{cuello de botella}) de dimensión reducida. La particularidad de CYCLOPS es que ese cuello de botella es un \emph{nodo circular}, implementado como dos neuronas acopladas $(u_i, v_i)$ que se proyectan sobre el círculo unidad; la fase asignada a cada muestra $i$ es entonces el ángulo
+\begin{equation}
+    \varphi_i = \operatorname{atan2}(v_i,\ u_i) \in [0, 2\pi).
+    \label{eq:cyclops-phase}
+\end{equation}
+La red se entrena minimizando el error de reconstrucción entre su entrada y su salida; tras varios reinicios aleatorios se conserva la solución con menor error. El paralelismo con CIRCUST es notable, ambos reducen la dimensionalidad y proyectan las muestras sobre una circunferencia para leer su fase como un ángulo (compárese con la ecuación~\eqref{eq:cpca-phi}), pero CYCLOPS realiza esa proyección de forma no lineal y no interpretable, mientras que el CPCA lo hace con una transformación lineal trazable.
+
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.8\textwidth]{./images/imagenAutoencoder.pdf}
-    \caption{Arquitectura resumida del autoencoder aplicado en CYCLOPS}
+    \caption[Arquitectura del \textit{autoencoder} circular de CYCLOPS.]{Arquitectura resumida del \textit{autoencoder} de cuello de botella circular empleado en CYCLOPS. La red comprime la expresión en un único nodo circular, cuya fase ordena las muestras.}
     \label{fig:autoencoder}
 \end{figure}
 
-    \item \textbf{Corrección de covariables mediante codificación multi-hot:} en datos reales es habitual que aparezcan variaciones ajenas a los ritmos circadianos, como diferencias entre tejidos, efectos de laboratorio o características de los pacientes, que pueden ocultar la señal biológica. CYCLOPS 2.0 \cite{CYCLOPS2} añade una capa que envuelve al autoencoder original sin modificar su funcionamiento interno: mediante una codificación \textit{multi-hot} que indica qué covariables afectan a cada muestra, ajusta los datos de entrada para reducir el impacto de esos factores antes de comprimirlos en el espacio latente circular, y revierte ese ajuste tras la reconstrucción para mantener la coherencia con los valores originales.
-\end{itemize}
+Conviene señalar tres rasgos de CYCLOPS que condicionan su uso. Primero, requiere que las muestras cubran todo el ciclo para que la elipse quede bien definida y, en la práctica, un número elevado de ellas (sus autores estiman que del orden de varios cientos). Segundo, el orden que produce es \emph{relativo}: no fija ni el origen ni el sentido, por lo que necesita información externa para anclarlo al tiempo biológico (en sus aplicaciones, los autores fijan el origen con la fase media de un grupo de factores de transcripción de fase conocida). Tercero, al derivarse la fase de los propios datos de expresión, los contrastes de ritmicidad posteriores tienden a ser demasiado liberales, lo que obliga a usar umbrales de significación más estrictos.
 
-Más allá de estas dos familias, han surgido otras metodologías orientadas a problemas específicos de la reconstrucción del orden temporal:
+Su evolución, \textbf{CYCLOPS 2.0} \cite{CYCLOPS2}, mantiene esta arquitectura y añade una \textbf{corrección de covariables}: mediante una codificación \textit{multi-hot} que indica qué factores (tejido, lote de laboratorio, características del paciente) afectan a cada muestra, ajusta los datos de entrada para atenuar esas fuentes de variación ajenas al ritmo antes de comprimirlos en el cuello de botella, y revierte el ajuste tras la reconstrucción.
 
-\begin{itemize}
-    \item \textbf{PENN (\textit{Phase Estimation Neural Network}):} parte de la misma idea que CYCLOPS —un autoencoder con una capa intermedia circular que asigna una fase a cada muestra— pero modifica el entrenamiento. Además del error de reconstrucción, PENN \cite{penn2023} impone que los valores de los genes (o de los componentes principales) sigan una curva cosenoidal cuando se ordenan según la fase estimada. Esta regularización estabiliza la estimación y mejora su robustez frente al ruido de los datos biológicos.
-    \item \textbf{CHIRAL:} algoritmo diseñado para conjuntos de datos transcriptómicos multi-tejido, como los de GTEx. En lugar de tratar todos los tejidos como un único bloque, CHIRAL \cite{chiral2020} opera de forma jerárquica: estima primero una fase interna por tejido a partir de genes reloj específicos y la integra después, para los tejidos de un mismo donante, en una fase interna global del donante. Así separa la variabilidad entre tejidos de la fase circadiana sistémica del individuo.
-\end{itemize}
+\textbf{PENN} (\textit{Phase Estimation Neural Network}) \cite{penn2023} comparte el esqueleto de CYCLOPS reducción previa de la dimensionalidad mediante componentes principales y un \textit{autoencoder} con un nodo circular que asigna la fase según la ecuación~\eqref{eq:cyclops-phase}, pero modifica el criterio de entrenamiento. CYCLOPS solo minimiza el error de reconstrucción y, por tanto, no aprovecha que la expresión de los genes rítmicos debe describir una curva periódica al ordenarse por fase. PENN incorpora esa información añadiendo un segundo término a la función de pérdida, que exige que cada gen se ajuste a una onda cosenoidal cuando las muestras se colocan en el orden estimado:
+\begin{equation}
+    \mathcal{L} = \underbrace{\frac{1}{m}\sum_{i=1}^{m}\big\lVert x_i - \hat{x}_i\big\rVert^2}_{\text{reconstrucción}}
+    \; + \;
+    \lambda \underbrace{\frac{1}{m}\sum_{i=1}^{m}\frac{1}{n}\sum_{g=1}^{n}\Big(x_i^{(g)} - \hat{y}_i^{(g)}\Big)^2}_{\text{ajuste a coseno}},
+    \label{eq:penn-loss}
+\end{equation}
+donde $\hat{x}_i$ es la reconstrucción de la muestra $x_i$, $\hat{y}_i^{(g)}$ es el valor predicho para el gen $g$ por una curva cosenoidal de la fase estimada y $\lambda$ pondera ambos objetivos. Esta regularización geométrica estabiliza la estimación y, según sus autores, mejora la precisión del orden frente a CYCLOPS sin alterar la arquitectura básica. Aun así, comparte con él la naturaleza de caja negra: la fase se obtiene de los pesos de una red, sin una lectura estadística directa.
+
+\subsection{Métodos para datos multi-tejido: CHIRAL}
+\label{subsec:chiral}
+
+Por último, \textbf{CHIRAL} \cite{chiral2020} responde a un escenario distinto: el de los grandes atlas multi-tejido, como GTEx, en los que de cada donante se dispone de muestras de varios órganos. En lugar de tratar todos los tejidos como un único bloque, CHIRAL opera de forma jerárquica: estima primero una fase interna específica de cada tejido a partir de sus genes reloj y la integra después, para los tejidos de un mismo donante, en una fase interna global del individuo. Así separa la variabilidad propia de cada tejido de la fase circadiana sistémica del donante. Su contrapartida es que esa misma fortaleza lo hace dependiente de la estructura multi-tejido: pierde eficacia en estudios de un solo tejido o en cohortes pequeñas, donde no existe esa jerarquía sobre la que apoyar la estimación.
 
 \section{Fundamentos matemáticos de CPCA y FMM}
+\label{sec:fundamentos}
 % Aquí introduciremos las bases matemáticas de CPCA y el modelo FMM.
 (En desarrollo...)
 
 \chapter{Diseño e Implementación en Python}
+\label{cap:implementacion}
 % Aquí detallaremos la arquitectura modular: módulos de preprocesamiento, inferencia y validación.
 (En desarrollo...)
 
@@ -311,57 +440,6 @@ Más allá de estas dos familias, han surgido otras metodologías orientadas a p
 % ==========================================
 \begin{thebibliography}{9}
 
-\bibitem{larriba2023}
-Larriba, Y., Mason, I. C., Saxena, R., Scheer, F. A. J. L., y Rueda, C. (2023).
-\textit{CIRCUST: A novel methodology for temporal order reconstruction of molecular rhythms; validation and application towards a daily rhythm gene expression atlas in humans}.
-PLOS Computational Biology, 19(9):e1011510. \url{https://doi.org/10.1371/journal.pcbi.1011510}
-
-\bibitem{scholz2007}
-Scholz, M. (2007).
-\textit{Analysing Periodic Phenomena by Circular PCA}.
-En \textit{Bioinformatics Research and Development (BIRD 2007)} (pp. 38-47). Springer.
-
-\bibitem{CYCLOPS}
-Anafi, R., Francey, L., Hogenesch, J., y Kim, J. (2017).
-\textit{CYCLOPS reveals human transcriptional rhythms in health and disease}.
-Proceedings of the National Academy of Sciences of the United States of America, 114(20):5312--5317. \url{https://doi.org/10.1073/pnas.1619320114}
-
-\bibitem{CYCLOPS2}
-Hammarlund, J. A. (2025).
-\textit{CYCLOPS 2.0: improving and applying circadian phase reconstruction in confounded datasets} (Tesis doctoral).
-Drexel University, Filadelfia, Pensilvania.
-
-\bibitem{penn2023}
-Seyed, M. A., et al. (2023).
-\textit{PENN: Phase Estimation Neural Network on Gene Expression Data}.
-En \textit{Bioinformatics and Biomedicine}. \url{https://doi.org/10.1007/978-3-031-39821-6_1}
-
-\bibitem{chiral2020}
-Talamanca, L., et al. (2023).
-\textit{Sex-dimorphic and age-dependent organization of 24-hour gene expression rhythms in humans}.
-Science, 379(6631):478-483. \url{https://doi.org/10.1126/science.add0846}
-% (Nota: Talamanca et al. son los creadores y máximos exponentes del uso del algoritmo CHIRAL sobre los datos del GTEx).
-
-\bibitem{fmmAlgorithm}
-Rueda, C., Larriba, Y., y Peddada, S. (2019).
-\textit{Frequency Modulated Möbius Model Accurately Predicts Rhythmic Signals in Biological and Physical Sciences}.
-Scientific Reports, 9:18701. \url{https://doi.org/10.1038/s41598-019-54569-1}
-
-\bibitem{cosinor}
-Cornelissen, G. (2014).
-\textit{Cosinor-based rhythmometry}.
-Theoretical Biology \& Medical Modelling, 11:16. \url{https://doi.org/10.1186/1742-4682-11-16}
-
-\bibitem{larribaORI}
-Larriba, Y., Rueda, C., Fernández, M. A., y Peddada, S. D. (2016).
-\textit{Order restricted inference for oscillatory systems for detecting rhythmic signals}.
-Nucleic Acids Research, 44(22):e163. \url{https://doi.org/10.1093/nar/gkw771}
-
-\bibitem{gtex2020}
-GTEx Consortium (2020).
-\textit{The GTEx Consortium atlas of genetic regulatory effects across human tissues}.
-Science, 369(6509):1318-1330. \url{https://doi.org/10.1126/science.aaz1776}
-
 \bibitem{takahashi2017}
 Takahashi, J. S. (2017).
 \textit{Transcriptional architecture of the mammalian circadian clock}.
@@ -371,6 +449,16 @@ Nature Reviews Genetics, 18(3):164--179. \url{https://doi.org/10.1038/nrg.2016.1
 Klein, D. C., Moore, R. Y., y Reppert, S. M. (Eds.) (1991).
 \textit{Suprachiasmatic Nucleus: The Mind's Clock}.
 Oxford University Press, Nueva York.
+
+\bibitem{czeisler1999}
+Czeisler, C. A., y Klerman, E. B. (1999).
+\textit{Circadian and sleep-dependent regulation of hormone release in humans}.
+Recent Progress in Hormone Research, 54:97--130.
+
+\bibitem{roenneberg2016}
+Roenneberg, T., y Merrow, M. (2016).
+\textit{The Circadian Clock and Human Health}.
+Current Biology, 26(10):R432--R443. \url{https://doi.org/10.1016/j.cub.2016.04.011}
 
 \bibitem{zhang2014}
 Zhang, R., Lahens, N. F., Ballance, H. I., Hughes, M. E., y Hogenesch, J. B. (2014).
@@ -400,15 +488,25 @@ Hesse, J., Martinelli, J., Aboumanify, O., Ballesta, A., y Relógio, A. (2021).
 \textit{A mathematical model of the circadian clock and drug pharmacology to optimize irinotecan administration timing in colorectal cancer}.
 Computational and Structural Biotechnology Journal, 19:5170--5183. \url{https://doi.org/10.1016/j.csbj.2021.08.051}
 
-\bibitem{czeisler1999}
-Czeisler, C. A., y Klerman, E. B. (1999).
-\textit{Circadian and sleep-dependent regulation of hormone release in humans}.
-Recent Progress in Hormone Research, 54:97--130.
+\bibitem{ueda2005}
+Ueda, H. R., Hayashi, S., Chen, W., Sano, M., Machida, M., Shigeyoshi, Y., Iino, M., y Hashimoto, S. (2005).
+\textit{System-level identification of transcriptional circuits underlying mammalian circadian clocks}.
+Nature Genetics, 37(2):187--192. \url{https://doi.org/10.1038/ng1504}
 
-\bibitem{roenneberg2016}
-Roenneberg, T., y Merrow, M. (2016).
-\textit{The Circadian Clock and Human Health}.
-Current Biology, 26(10):R432--R443. \url{https://doi.org/10.1016/j.cub.2016.04.011}
+\bibitem{panda2002}
+Panda, S., Antoch, M. P., Miller, B. H., Su, A. I., Schook, A. B., Straume, M., Schultz, P. G., Kay, S. A., Takahashi, J. S., y Hogenesch, J. B. (2002).
+\textit{Coordinated Transcription of Key Pathways in the Mouse by the Circadian Clock}.
+Cell, 109(3):307--320. \url{https://doi.org/10.1016/S0092-8674(02)00722-5}
+
+\bibitem{gtex2020}
+GTEx Consortium (2020).
+\textit{The GTEx Consortium atlas of genetic regulatory effects across human tissues}.
+Science, 369(6509):1318-1330. \url{https://doi.org/10.1126/science.aaz1776}
+
+\bibitem{larriba2023}
+Larriba, Y., Mason, I. C., Saxena, R., Scheer, F. A. J. L., y Rueda, C. (2023).
+\textit{CIRCUST: A novel methodology for temporal order reconstruction of molecular rhythms; validation and application towards a daily rhythm gene expression atlas in humans}.
+PLOS Computational Biology, 19(9):e1011510. \url{https://doi.org/10.1371/journal.pcbi.1011510}
 
 \bibitem{brown2005}
 Brown, S. A., Fleury-Olela, F., Nagoshi, E., Hauser, C., Juge, C., Meier, C. A., Chicheportiche, R., Dayer, J.-M., Albrecht, U., y Schibler, U. (2005).
@@ -425,15 +523,56 @@ Zhu, Y., Wang, L., Yin, Y., y Yang, E. (2017).
 \textit{Systematic Analysis of Gene Expression Patterns Associated with Postmortem Interval in Human Tissues}.
 Scientific Reports, 7(1):5435. \url{https://doi.org/10.1038/s41598-017-05882-0}
 
-\bibitem{ueda2005}
-Ueda, H. R., Hayashi, S., Chen, W., Sano, M., Machida, M., Shigeyoshi, Y., Iino, M., y Hashimoto, S. (2005).
-\textit{System-level identification of transcriptional circuits underlying mammalian circadian clocks}.
-Nature Genetics, 37(2):187--192. \url{https://doi.org/10.1038/ng1504}
+\bibitem{fmmAlgorithm}
+Rueda, C., Larriba, Y., y Peddada, S. (2019).
+\textit{Frequency Modulated Möbius Model Accurately Predicts Rhythmic Signals in Biological and Physical Sciences}.
+Scientific Reports, 9:18701. \url{https://doi.org/10.1038/s41598-019-54569-1}
 
-\bibitem{panda2002}
-Panda, S., Antoch, M. P., Miller, B. H., Su, A. I., Schook, A. B., Straume, M., Schultz, P. G., Kay, S. A., Takahashi, J. S., y Hogenesch, J. B. (2002).
-\textit{Coordinated Transcription of Key Pathways in the Mouse by the Circadian Clock}.
-Cell, 109(3):307--320. \url{https://doi.org/10.1016/S0092-8674(02)00722-5}
+\bibitem{scholz2007}
+Scholz, M. (2007).
+\textit{Analysing Periodic Phenomena by Circular PCA}.
+En \textit{Bioinformatics Research and Development (BIRD 2007)} (pp. 38-47). Springer.
+
+\bibitem{larribaORI}
+Larriba, Y., Rueda, C., Fernández, M. A., y Peddada, S. D. (2016).
+\textit{Order restricted inference for oscillatory systems for detecting rhythmic signals}.
+Nucleic Acids Research, 44(22):e163. \url{https://doi.org/10.1093/nar/gkw771}
+
+\bibitem{CYCLOPS}
+Anafi, R., Francey, L., Hogenesch, J., y Kim, J. (2017).
+\textit{CYCLOPS reveals human transcriptional rhythms in health and disease}.
+Proceedings of the National Academy of Sciences of the United States of America, 114(20):5312--5317. \url{https://doi.org/10.1073/pnas.1619320114}
+
+\bibitem{CYCLOPS2}
+Hammarlund, J. A. (2025).
+\textit{CYCLOPS 2.0: improving and applying circadian phase reconstruction in confounded datasets} (Tesis doctoral).
+Drexel University, Filadelfia, Pensilvania.
+
+\bibitem{penn2023}
+Ansary Ogholbake, A., y Cheng, Q. (2023).
+\textit{PENN: Phase Estimation Neural Network on Gene Expression Data}.
+En \textit{Deep Learning, Big Data and Blockchain (DBB 2023)}. Lecture Notes in Networks and Systems, vol. 768, pp. 59--67. Springer. \url{https://doi.org/10.1007/978-3-031-42317-8_5}
+
+\bibitem{chiral2020}
+Talamanca, L., et al. (2023).
+\textit{Sex-dimorphic and age-dependent organization of 24-hour gene expression rhythms in humans}.
+Science, 379(6631):478-483. \url{https://doi.org/10.1126/science.add0846}
+% (Nota: Talamanca et al. son los creadores y máximos exponentes del uso del algoritmo CHIRAL sobre los datos del GTEx).
+
+\bibitem{cosinor}
+Cornelissen, G. (2014).
+\textit{Cosinor-based rhythmometry}.
+Theoretical Biology \& Medical Modelling, 11:16. \url{https://doi.org/10.1186/1742-4682-11-16}
+
+\bibitem{zeitzeiger2016}
+Hughey, J. J., Hastie, T., y Butte, A. J. (2016).
+\textit{ZeitZeiger: supervised learning for high-dimensional data from an oscillatory system}.
+Nucleic Acids Research, 44(8):e80. \url{https://doi.org/10.1093/nar/gkw030}
+
+\bibitem{timesignature2018}
+Braun, R., Kath, W. L., Iwanaszko, M., Kula-Eversole, E., Abbott, S. M., Reid, K. J., Zee, P. C., y Allada, R. (2018).
+\textit{Universal method for robust detection of circadian state from gene expression}.
+Proceedings of the National Academy of Sciences of the United States of America, 115(39):E9247--E9256. \url{https://doi.org/10.1073/pnas.1800314115}
 
 \end{thebibliography}
 
