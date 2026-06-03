@@ -207,6 +207,7 @@ Se han propuesto distintos métodos para estimar el orden temporal a partir excl
 \end{itemize}
 
 \subsection{Limitaciones de los métodos actuales}
+\label{subsec:limitaciones}
 
 Ninguno de los métodos disponibles resuelve por completo el problema, y todos presentan compromisos que conviene comparar de forma conjunta. Los enfoques basados en redes neuronales (CYCLOPS y PENN) modelan bien relaciones no lineales, pero funcionan como cajas negras: carecen de una trazabilidad estadística estricta y son propensos al sobreajuste cuando el número de muestras es reducido, una situación habitual en transcriptómica. CHIRAL, por su parte, fue diseñado para infraestructuras multi-tejido masivas y pierde eficacia en estudios de un solo tejido o en cohortes pequeñas, al depender de la jerarquía entre los órganos de un mismo donante para estabilizar la inferencia.
 
@@ -250,12 +251,18 @@ El desarrollo de este trabajo se apoya en competencias adquiridas en varias asig
     \item \textbf{Computación Estadística.} Fundamenta la programación y la implementación computacional del algoritmo, así como su optimización.
 \end{itemize}
 
-\chapter{Metodología Matemática}
+\chapter{Metodología}
 \label{cap:metodologia}
-% NOTA: las dos primeras secciones recogen contenido desplazado desde la
-% Introducción (descripción de los algoritmos de estimación del orden temporal).
-% Las bases matemáticas formales de CPCA y del modelo FMM se desarrollan en la
-% última sección (en desarrollo).
+% ESTRUCTURA DEL CAPITULO (adaptada de la guia de la tutora):
+%   2.1 El algoritmo CIRCUST            ] revision de
+%   2.2 Otros metodos                   ] metodos existentes
+%   2.3 Fundamentos matematicos (CPCA y FMM)
+%   2.4 Mejora de CIRCUST: implementacion modular y eficiencia   <- aportacion
+%   2.5 Modelo FMM robusto                                       <- aportacion
+%   2.6 El problema de sincronizacion de ordenes circulares      <- aportacion
+%   2.7 Ordenacion agregada: orden de consenso                   <- aportacion
+%   2.8 Marco de validacion y metricas de similitud              <- aportacion
+% Las secciones 2.4-2.8 son las contribuciones propias del TFG.
 
 \section{El algoritmo CIRCUST}
 \label{sec:circust}
@@ -264,7 +271,7 @@ CIRCUST (\textit{CIRCular-robUST}) \cite{larriba2023} es una metodología para r
 
 Formalmente, se parte de una matriz de expresión $\mathbf{X}\in\mathbb{R}^{G\times n}$, en la que las $G$ filas corresponden a genes (del orden de decenas de miles) y las $n$ columnas a las muestras. El objetivo es doble: asignar a cada muestra $i$ una fase $\varphi_i\in[0,2\pi)$ que refleje su posición dentro del ciclo de 24 horas y, a partir del orden inducido por esas fases, caracterizar qué genes son rítmicos y cuándo alcanzan su pico. Conviene recordar (véase la Introducción) que la fase estimada es de naturaleza \emph{circular}: queda determinada salvo una rotación global y un sentido de giro, que deben fijarse después mediante información biológica externa.
 
-El método se organiza como una \textbf{secuencia de etapas bien delimitadas} (Figura~\ref{fig:pipeline}), cada una con una entrada y una salida claras. Esta descomposición no es meramente expositiva: es la que da pie a la re-implementación modular descrita en el Capítulo~\ref{cap:implementacion}, donde cada etapa se aísla en un componente independiente. A continuación se describe primero el flujo de trabajo de forma general y, después, se detallan sus dos pilares estadísticos, el Análisis de Componentes Principales Circular (CPCA) y el modelo FMM además de las aportaciones que CIRCUST introduce frente a los métodos previos.
+El método se organiza como una \textbf{secuencia de etapas bien delimitadas} (Figura~\ref{fig:pipeline}), cada una con una entrada y una salida claras. Esta descomposición no es meramente expositiva: es la que da pie a la re-implementación modular descrita en la Sección~\ref{sec:implementacion}, donde cada etapa se aísla en un componente independiente. A continuación se describe primero el flujo de trabajo de forma general y, después, se detallan sus dos pilares estadísticos, el Análisis de Componentes Principales Circular (CPCA) y el modelo FMM además de las aportaciones que CIRCUST introduce frente a los métodos previos.
 
 \begin{figure}[htbp]
 \centering
@@ -365,7 +372,7 @@ Una vez descrito el flujo de trabajo, conviene situar a CIRCUST respecto a los m
 
 \paragraph{Transparencia e interpretabilidad estadística.} La aportación más característica de CIRCUST es que cada etapa es un procedimiento estadístico con una lectura explícita. Las componentes de la ecuación~\eqref{eq:cpca-phi} son las direcciones de máxima varianza de los genes reloj, los parámetros de la ecuación~\eqref{eq:fmm} son la amplitud, la fase y la asimetría de cada gen y el $R^2$ de la ecuación~\eqref{eq:r2} es una bondad de ajuste interpretable. Frente a ello, los métodos basados en \textit{autoencoders} como CYCLOPS o PENN comprimen la señal en un espacio latente cuyos pesos no admiten una interpretación biológica directa: aciertan a ordenar las muestras, pero no ofrecen una trazabilidad estadística de \emph{por qué} lo hacen. Esta transparencia tiene además una consecuencia práctica determinante para este trabajo: permite intervenir, sustituir o reforzar etapas concretas (por ejemplo, la función de pérdida del ajuste FMM o la regla de sincronización) sin desmontar el método completo.
 
-\paragraph{Descomposición modular del problema.} CIRCUST aborda la reconstrucción del orden temporal descomponiéndola en subproblemas estadísticos bien delimitados; reducción de dimensionalidad, sincronización, selección de genes y agregación de órdenes. En lugar de resolverla de un solo paso con un modelo monolítico, como hace un autoencoder entrenado de extremo a extremo. Esta modularidad conceptual facilita razonar sobre cada etapa por separado, diagnosticar dónde falla la estimación y reemplazar componentes de forma aislada. Es también el principio que vertebra la re-implementación desarrollada en este trabajo (Capítulo~\ref{cap:implementacion}), que materializa cada etapa en un módulo independiente, frente al \textit{script} monolítico de la versión original.
+\paragraph{Descomposición modular del problema.} CIRCUST aborda la reconstrucción del orden temporal descomponiéndola en subproblemas estadísticos bien delimitados; reducción de dimensionalidad, sincronización, selección de genes y agregación de órdenes. En lugar de resolverla de un solo paso con un modelo monolítico, como hace un autoencoder entrenado de extremo a extremo. Esta modularidad conceptual facilita razonar sobre cada etapa por separado, diagnosticar dónde falla la estimación y reemplazar componentes de forma aislada. Es también el principio que vertebra la re-implementación desarrollada en este trabajo (Sección~\ref{sec:implementacion}), que materializa cada etapa en un módulo independiente, frente al \textit{script} monolítico de la versión original.
 
 \paragraph{Flexibilidad del modelo FMM frente a la rigidez del Cosinor.} A diferencia del enfoque clásico Cosinor (ecuación~\eqref{eq:cosinor}), que impone una sinusoide simétrica, el modelo FMM (ecuación~\eqref{eq:fmm}) captura los picos asimétricos característicos del transcriptoma a través del parámetro $\omega$, recuperando el coseno como caso particular ($\omega=1$). Logra así un equilibrio que los armónicos múltiples no alcanzan: gana flexibilidad para representar formas de onda complejas sin incurrir en el sobreajuste que provoca añadir términos, y conserva una interpretación directa de la fase del pico, que es precisamente la magnitud de interés biológico.
 
@@ -419,12 +426,196 @@ Por último, \textbf{CHIRAL} \cite{chiral2020} responde a un escenario distinto:
 
 \section{Fundamentos matemáticos de CPCA y FMM}
 \label{sec:fundamentos}
-% Aquí introduciremos las bases matemáticas de CPCA y el modelo FMM.
+% Base teórica formal que sostiene las aportaciones de las secciones 2.4-2.8:
+%   - Estadística circular básica: fase, orden circular, media y correlación
+%     circular, distribución de von Mises (fija la notación del capítulo).
+%   - CPCA: PCA, descomposición SVD, proyección al círculo unidad y
+%     justificación de phi = atan2(PC2, PC1)  [ec. (2.1)].
+%   - Modelo FMM: transformación de Möbius, parámetros, estimación y rol de omega.
+%   - ORI (regresión isotónica unimodal) y el coeficiente R^2.
+% NOTA (reparto híbrido): la distribución de von Mises se introduce en 2.5
+% (FMM robusto) y la correlación circular en 2.8 (validación), donde se usan.
+
+Las secciones anteriores han descrito CIRCUST y sus alternativas a un nivel operativo. Esta sección desarrolla las herramientas matemáticas que sustentan el método y, con ellas, las aportaciones de las secciones siguientes. Se parte de unos preliminares de estadística circular que fijan la notación, se formaliza después la ordenación circular mediante CPCA y, por último, se presentan los dos modelos de ritmicidad que emplea CIRCUST: el paramétrico FMM y el no paramétrico ORI.
+
+\subsection{Preliminares de estadística circular}
+\label{subsec:estadistica-circular}
+
+El rasgo distintivo del problema es que el tiempo se representa sobre una circunferencia, no sobre una recta. Un instante del ciclo se codifica como un ángulo $\theta\in[0,2\pi)$, identificado con el punto $(\cos\theta,\sin\theta)$ del círculo unidad; la hora $0$ y la hora $24$ son el mismo punto. Esto obliga a sustituir los estadísticos lineales habituales por sus análogos circulares.
+
+\paragraph{Dirección media y concentración.} La media aritmética de un conjunto de ángulos no es un buen resumen (el promedio de $1^\circ$ y $359^\circ$ debería ser $0^\circ$, no $180^\circ$). En su lugar se promedian los vectores unitarios asociados. Dados $\theta_1,\dots,\theta_n$, se define el \emph{vector resultante medio} a partir de
+\begin{equation}
+    C = \sum_{i=1}^{n}\cos\theta_i, \qquad S = \sum_{i=1}^{n}\sin\theta_i,
+    \label{eq:resultante}
+\end{equation}
+de donde la \emph{dirección media} y la \emph{longitud resultante media} son
+\begin{equation}
+    \bar\theta = \operatorname{atan2}(S, C), \qquad
+    \bar R = \frac{\sqrt{C^{2}+S^{2}}}{n}\in[0,1].
+    \label{eq:direccion-media}
+\end{equation}
+La dirección media $\bar\theta$ es el centro del conjunto de ángulos, y $\bar R$ mide su \emph{concentración}: vale $1$ cuando todos los ángulos coinciden y se acerca a $0$ cuando se reparten de forma uniforme por el círculo.
+
+\paragraph{Orden circular.} Ordenar $n$ muestras según su ángulo produce un \emph{orden circular}: una disposición cíclica en la que no hay primero ni último, sino solo posiciones relativas sobre la circunferencia. Dos consecuencias son centrales para todo el trabajo. Primera, el orden circular queda determinado únicamente \emph{salvo una rotación} (el origen es arbitrario) \emph{y una reflexión} (el sentido de giro, horario o antihorario, es a priori intercambiable), fijar ambos grados de libertad es el problema de sincronización, del que se ocupa la Sección~\ref{sec:sincronizacion}. Segunda, la distancia natural entre dos ángulos no es $|\,\alpha-\beta\,|$, sino la distancia geodésica sobre el círculo,
+\begin{equation}
+    d(\alpha,\beta) = \min\big(|\alpha-\beta|,\; 2\pi - |\alpha-\beta|\big)\in[0,\pi],
+    \label{eq:dist-circular}
+\end{equation}
+que es la que emplean las técnicas de agregación y validación de las Secciones~\ref{sec:agregacion} y~\ref{sec:validacion}.
+
+Otras herramientas de estadística circular se introducen más adelante, allí donde se emplean: la distribución de von Mises como núcleo de ponderación temporal en la Sección~\ref{sec:fmm-robusto} y los coeficientes de correlación circular para evaluar reconstrucciones del orden en la Sección~\ref{sec:validacion}.
+
+\subsection{Ordenación circular mediante CPCA}
+\label{subsec:cpca-formal}
+
+El primer pilar de CIRCUST es el Análisis de Componentes Principales Circular (CPCA) \cite{scholz2007}, un método previo que el algoritmo adopta sin modificarlo. Su función es reducir la dimensionalidad de la expresión de los genes reloj para obtener un orden circular de las muestras. Para ello aplica un Análisis de Componentes Principales a esa submatriz, toma los dos primeros componentes como coordenadas de cada muestra en el plano y lee su posición angular como fase, según la proyección ya presentada en la ecuación~\eqref{eq:cpca-phi}.
+
+La razón de que esa proyección recupere el tiempo se entiende a partir de la forma de la señal. Si un gen reloj oscila de modo aproximadamente sinusoidal a lo largo del día, su expresión en una muestra tomada en el instante $t$ puede escribirse como
+\begin{equation}
+    x_g(t) = a_g\cos(t-\phi_g) = a_g\cos\phi_g\,\cos t + a_g\sin\phi_g\,\sin t,
+    \label{eq:gen-sinusoidal}
+\end{equation}
+esto es, como una combinación lineal de las mismas dos señales, $\cos t$ y $\sin t$, sea cual sea su fase $\phi_g$. En ausencia de ruido, la matriz de los genes reloj tiene por tanto rango dos y toda su información esencial vive en un plano. El Análisis de Componentes Principales identifica precisamente ese plano de máxima variación. Sus dos primeros componentes se comportan como dos oscilaciones en cuadratura, de manera que las muestras se sitúan sobre una elipse y su ángulo reproduce el instante del ciclo.
+
+De ahí la proyección sobre el círculo unidad de la ecuación~\eqref{eq:cpca-phi}. La fase de cada muestra es su ángulo $\varphi_i$ y su distancia al origen $\rho_i$ mide la fiabilidad de esa fase. Ordenar las muestras por $\varphi_i$ produce el orden circular preliminar. Las muestras con $\rho_i$ próximo a cero carecen de una fase bien definida y se tratan como \textit{outliers}. El problema que resuelve el CPCA es, en consecuencia, doble. Convierte una matriz de expresión de alta dimensión en un único orden circular interpretable y proporciona a la vez un criterio de calidad por muestra.
+
+\subsection{El modelo FMM}
+\label{subsec:fmm-formal}
+
+El segundo pilar es el modelo de ritmicidad. El enfoque clásico, el Cosinor \cite{cosinor} de la ecuación~\eqref{eq:cosinor}, ajusta una sinusoide simétrica, su rigidez sesga la estimación cuando los genes presentan picos asimétricos y la alternativa de añadir armónicos tiende a sobreajustar el ruido. CIRCUST adopta en su lugar el modelo FMM (\textit{Frequency Modulated Möbius}) \cite{fmmAlgorithm}, también un método previo del que aquí solo interesa su aportación.
+
+El FMM, presentado en la ecuación~\eqref{eq:fmm}, deforma el argumento del coseno mediante una transformación de Möbius del círculo, gobernada por un parámetro de asimetría $\omega$. Con ello ataca justamente el problema del Cosinor: captura formas de onda asimétricas y apuntadas (recuperando el coseno simétrico como caso particular, $\omega=1$) sin renunciar a una interpretación directa de sus parámetros; nivel medio, amplitud, fase del pico y asimetría. Y sin el sobreajuste asociado a los modelos multiarmónicos. El modelo se ajusta por mínimos cuadrados, es precisamente esa función de pérdida la que la Sección~\ref{sec:fmm-robusto} sustituye por un criterio penalizado más robusto, que constituye una de las aportaciones de este trabajo.
+
+\subsection{Inferencia con restricciones de orden (ORI)}
+\label{subsec:ori-formal}
+
+El modelo FMM impone una forma funcional concreta. Como contrapeso, CIRCUST emplea además un criterio \emph{no paramétrico} que solo asume que la expresión sigue un patrón \emph{unimodal} a lo largo del ciclo (sube hasta un máximo y luego baja), sin fijar ninguna ecuación. Es la Inferencia con Restricciones de Orden (ORI) \cite{larribaORI}: dada la expresión ordenada por fase, se busca la curva que mejor la ajusta sujeta a la restricción de unimodalidad, mediante regresión isotónica (algoritmo \textit{pool adjacent violators} PAVA). La calidad del ajuste se cuantifica de nuevo con un coeficiente de determinación,
+\begin{equation}
+    R^2_{\text{ORI}} = 1 - \frac{\text{SSE}_{\text{unimodal}}}{\text{SSE}_{\text{constante}}},
+    \label{eq:r2-ori}
+\end{equation}
+que compara el error del ajuste unimodal con el de un modelo plano (sin ritmo). Disponer de un criterio paramétrico (FMM) y otro no paramétrico (ORI) hace más exigente la selección de genes rítmicos descrita en la Sección~\ref{subsec:topgenes-intro}, un gen solo se considera fiable si ambos coinciden en que oscila, lo que reduce el riesgo de seleccionar artefactos dependientes del modelo.
+
+% ===========================================================================
+% APORTACIONES METODOLÓGICAS DEL TFG (secciones 2.4 - 2.8)
+% ===========================================================================
+
+\section{Mejora de CIRCUST: implementación modular y eficiencia}
+\label{sec:implementacion}
+
+Las aportaciones metodológicas de las secciones siguientes se apoyan en un objetivo de soporte que conviene presentar antes, la re-implementación de CIRCUST en Python. La versión original es un \textit{script} monolítico en R, en el que todas las etapas comparten un mismo flujo de código y resulta difícil de probar, extender o paralelizar (Sección~\ref{subsec:limitaciones}). La re-implementación persigue dos metas complementarias. La primera es una arquitectura modular que aísle cada etapa del algoritmo. La segunda es una mejora del rendimiento que aproveche el ecosistema numérico de Python. Ambas se describen a continuación.
+
+\subsection{Estructura modular}
+\label{subsec:modular}
+
+La idea principal es traducir la descomposición conceptual del método (Figura~\ref{fig:pipeline}) en una descomposición real del código. Cada etapa del algoritmo se encapsula en un componente independiente, implementado como una clase con un método \texttt{run()} que recibe la salida de la etapa anterior y devuelve un objeto de resultado bien definido. Así, el preprocesamiento, la selección de genes reloj, el CPCA, la sincronización, la selección de genes TOP y la estimación robusta del orden viven cada uno en su propio módulo, y un orquestador se limita a encadenarlos. Los datos que circulan entre etapas no son variables sueltas, sino estructuras de resultado explícitas, lo que hace inequívoco qué produce y qué consume cada componente.
+
+Esta separación se extiende a los modelos de ritmicidad, que se agrupan en un subpaquete propio bajo una interfaz común. Todos los modelos (el FMM en sus variantes base y robusta, el Cosinor y el ORI) comparten un mismo contrato, una clase base abstracta con un método \texttt{fit()} y un contenedor de resultados homogéneo. De este modo, cualquier punto del algoritmo que necesite ajustar una curva puede usar uno u otro modelo sin cambios en el resto del código, lo que resulta esencial para introducir el FMM robusto de la Sección~\ref{sec:fmm-robusto} como una pieza intercambiable.
+
+La arquitectura prevé además varios puntos de configuración que permiten alterar el comportamiento del algoritmo sin reescribirlo. Se puede seleccionar la variante del modelo FMM, el método con que se elige el orden robusto, la técnica de agregación de órdenes o el conjunto de genes reloj de partida, todo ello como opciones y no como modificaciones del código. Por último, la implementación separa el cálculo de las tareas accesorias. El núcleo de cómputo no se ocupa de la entrada y salida, que se limita a volcar los resultados a ficheros, y tanto la visualización como la validación residen en módulos aparte. El conjunto se distribuye como un paquete instalable y se acompaña de pruebas unitarias.
+
+El resultado es un sistema testable, reutilizable y extensible, en el que una etapa puede probarse de forma aislada, reemplazarse por una variante o paralelizarse sin afectar a las demás. Es justamente lo que el \textit{script} monolítico original no permitía.
+
+\subsection{Eficiencia en Python}
+\label{subsec:eficiencia}
+
+Python es un lenguaje interpretado y, por sí solo, más lento que R o C en los bucles numéricos intensivos. La eficiencia de esta implementación descansa, por tanto, en tres estrategias que evitan ejecutar esos bucles en Python puro.
+
+La primera es la \textbf{vectorización}. Las operaciones se expresan como álgebra matricial sobre arreglos completos en lugar de bucles elemento a elemento, y se delegan en bibliotecas numéricas compiladas. El CPCA, por ejemplo, se reduce a una descomposición en valores singulares resuelta por rutinas optimizadas de LAPACK, y el paso lineal del ajuste FMM es un problema de mínimos cuadrados igualmente vectorizado.
+
+La segunda es la \textbf{compilación al vuelo} (JIT). La parte más costosa del ajuste FMM es la búsqueda en rejilla, en la que el modelo y su función objetivo se evalúan miles de veces por cada gen. Esas funciones internas se compilan a código máquina con Numba, lo que elimina la sobrecarga del intérprete en el bucle crítico. La misma técnica se aplica al ajuste ORI. De forma opcional, y dado que cada punto de la rejilla es independiente de los demás, la búsqueda puede ejecutarse en GPU mediante CUDA cuando hay una disponible.
+
+La tercera es la \textbf{paralelización}, que se aplica en los dos lugares donde el trabajo se reparte de forma natural. Por un lado, los ajustes de los distintos genes en la selección de genes TOP se distribuyen entre los núcleos del procesador. Por otro, las $K$ repeticiones de la estimación robusta del orden, que son independientes entre sí, se ejecutan en paralelo. El tipo de paralelismo se elige según la naturaleza del cálculo. Cuando el trabajo libera el bloqueo global del intérprete, como ocurre con el FMM robusto al apoyarse en rutinas BLAS y en núcleos compilados con Numba, basta con hilos que comparten en memoria las matrices ya precalculadas y se evita el coste de serializar datos entre procesos. En caso contrario se recurre a procesos independientes.
+
+A estas tres estrategias se añade el \textbf{precálculo y reutilización} de resultados intermedios. En el FMM robusto, la rejilla y las matrices auxiliares se calculan una sola vez y se reutilizan para todos los genes, y el parámetro de penalización se calibra una única vez y se propaga a las etapas posteriores en lugar de recomputarse. El efecto conjunto de estas decisiones es una reducción sustancial del tiempo de cómputo frente a una traducción directa del algoritmo original.
+
+\section{Modelo FMM robusto}
+\label{sec:fmm-robusto}
+
+La primera aportación metodológica del trabajo es una versión robusta del ajuste FMM, concebida para estabilizar la estimación cuando los datos son escasos, ruidosos o de muestreo temporal irregular, condiciones habituales en las cohortes post-mortem humanas. La idea es modificar el modo en que se ajusta el modelo de la Sección~\ref{subsec:fmm-formal}, sin alterar su forma funcional, de manera que el ajuste resulte menos sensible al ruido y al desequilibrio en la distribución de las muestras.
+
+El ajuste FMM base estima los parámetros por mínimos cuadrados, esto es, minimizando la suma de residuos al cuadrado. Ese criterio presenta dos debilidades cuando los datos son escasos o ruidosos. La primera es que tiende a sobreajustar el ruido, produciendo ondas muy apuntadas que se ciñen a las observaciones concretas pero no al ritmo subyacente. La segunda es que trata todas las muestras por igual, de modo que las regiones del ciclo con muchas muestras dominan el ajuste mientras que las poco muestreadas apenas influyen, un problema frecuente cuando el muestreo temporal es irregular. El FMM robusto ataca ambas debilidades a la vez. Sustituye la función de pérdida por un criterio de potencia penalizado y pondera las muestras según su densidad temporal.
+
+\paragraph{Ponderación por densidad temporal.} Para que ninguna zona del ciclo pese más que otra por el mero hecho de estar más muestreada, a cada muestra $i$ se le asigna un peso inversamente proporcional a la densidad de muestras en su instante. Esa densidad se estima con un núcleo de von Mises (la distribución circular de la ecuación~\eqref{eq:vonmises}) centrado en cada muestra,
+\begin{equation}
+    \hat f(t) = \frac{1}{n\,2\pi\,\mathrm{I}_0(\kappa)}\sum_{j=1}^{n}\exp\!\big(\kappa\cos(t-t_j)\big),
+    \qquad
+    w_i \propto \frac{1}{\hat f(t_i)},
+    \label{eq:fmm-pesos}
+\end{equation}
+con los pesos reescalados para que $\sum_i w_i = n$. El parámetro de concentración $\kappa$ se elige de forma automática por validación cruzada dejando uno fuera. Así, las muestras situadas en tramos del ciclo poco representados reciben más peso, lo que compensa los muestreos irregulares.
+
+\paragraph{Criterio de potencia penalizado.} El núcleo de la propuesta es reemplazar la minimización del error por la maximización de un criterio que premia el ajuste y castiga la complejidad de la onda. Fijados los parámetros no lineales $(\alpha,\omega)$, que determinan la fase de Möbius $\varphi_i=\varphi(t_i;\alpha,\omega)$, el criterio es
+\begin{equation}
+    J(\alpha,\omega) = P(\alpha,\omega) - \lambda\,g(\omega)\,R(\alpha,\omega).
+    \label{eq:fmm-criterio}
+\end{equation}
+El primer término, $P$, es la potencia de un periodograma ponderado en la forma de Lomb--Scargle,
+\begin{equation}
+    P(\alpha,\omega) = \frac{u^2+v^2}{D},
+    \qquad\text{con}\quad
+    \begin{aligned}[t]
+        u &= \sum_i w_i\,(x_i-\bar x_w)\cos\varphi_i,\\
+        v &= \sum_i w_i\,(x_i-\bar x_w)\sin\varphi_i,\\
+        D &= \sum_i w_i\cos^2\varphi_i + \sum_i w_i\sin^2\varphi_i,
+    \end{aligned}
+    \label{eq:fmm-potencia}
+\end{equation}
+donde $\bar x_w$ es la media ponderada de la expresión. La potencia $P$ mide cuánta señal rítmica captura la onda definida por $(\alpha,\omega)$ y desempeña el papel que en el FMM base tenía el ajuste por mínimos cuadrados. De hecho, en ausencia de pesos y penalización, maximizar $P$ equivale a minimizar la suma de residuos al cuadrado. El segundo término penaliza la \emph{rugosidad}. La cantidad $R(\alpha,\omega)$ mide la curvatura de la onda ajustada a través de las segundas derivadas de sus componentes, de manera que las ondas muy onduladas o apuntadas, propias del sobreajuste, reciben un castigo mayor. El factor $g(\omega)=\big(\omega_0/(\omega+\omega_0)\big)^{p}$ refuerza esa penalización a medida que $\omega$ disminuye, es decir, precisamente en las formas más apuntadas, que son las más propensas a sobreajustar. El parámetro $\lambda$ gradúa el equilibrio entre ajuste y suavidad. Una vez localizado el máximo de $J$ sobre una rejilla de valores de $(\alpha,\omega)$, con un refinamiento local posterior, los parámetros lineales restantes (mesor, amplitud y forma) se obtienen en forma cerrada por mínimos cuadrados ponderados.
+
+\paragraph{Calibración de la penalización.} Queda por fijar $\lambda$. Un valor demasiado pequeño no corrige el sobreajuste, y uno demasiado grande aplana ritmos reales. La propuesta lo calibra de forma automática bajo la hipótesis nula de ausencia de ritmo. Se simulan numerosas réplicas de datos planos, sin más señal que el ruido, y para cada valor candidato de $\lambda$ se resume un cuantil alto del estadístico que detecta ondas apuntadas espurias. La curva de ese cuantil frente a $\lambda$ decrece a medida que se penaliza más, y se elige el valor situado en su codo, el punto a partir del cual aumentar la penalización ya apenas reduce los picos falsos. Este $\lambda$ calibrado se calcula una sola vez sobre el conjunto de datos y se reutiliza en todas las etapas que ajustan un FMM, como se anticipó en la Sección~\ref{subsec:eficiencia}.
+
+\paragraph{Estabilidad numérica.} Por último, la implementación evalúa la fase de Möbius sin calcularla de forma explícita. En lugar de obtener $\varphi$ y arriesgar la singularidad que la tangente introduce cuando $t-\alpha=\pi$, calcula directamente $\cos\varphi$ y $\sin\varphi$ mediante identidades del ángulo doble, cuyo denominador es una suma de cuadrados siempre positiva. Esto hace el ajuste numéricamente estable en todo el ciclo.
+
+\section{El problema de sincronización de órdenes circulares}
+\label{sec:sincronizacion}
+% Aportación 2 (la más desarrollada según la tutora). Avanza desde el anclaje
+% manual (ARNTL/DBP) hacia HyCIRCUST: sincronización híbrida in vivo/post mortem.
+
+\subsection{Formulación del problema y los $2n$ órdenes}
+\label{subsec:2n-ordenes}
+% Formular matemáticamente la estimación del orden temporal a nivel
+% metodológico y explicar POR QUÉ aparecen los 2n órdenes (rotación + dos
+% orientaciones). Guía: artículo CIRCUST (main + suplementario) y los dos
+% documentos aportados por la tutora.  [PENDIENTE: pedir esos 2 documentos.]
 (En desarrollo...)
 
-\chapter{Diseño e Implementación en Python}
-\label{cap:implementacion}
-% Aquí detallaremos la arquitectura modular: módulos de preprocesamiento, inferencia y validación.
+\subsection{Algoritmo de minimización para la sincronización}
+\label{subsec:hycircust}
+% HyCIRCUST: módulo que determina conjuntamente punto de arranque y orientación
+% del orden circular. Integra información temporal de tejidos periféricos in
+% vivo (genes core con etiqueta temporal) para mejorar comparabilidad entre
+% tejidos/estudios. Inspirado en el molecular timetable (Ueda 2004; Higashi
+% 2016). Formula la sincronización como alineación en el círculo de los
+% instantes de máxima expresión (estimados vía FMM1 sobre genes core):
+% busca la rotación y orientación que maximizan la concordancia entre el
+% tejido de referencia (in vivo) y el objetivo (post mortem). Se aproxima
+% como un problema de regresión circular.
+(En desarrollo...)
+
+\subsubsection{Información adicional}
+\label{subsubsec:info-adicional}
+(En desarrollo...)
+
+\subsubsection{Métricas de evaluación}
+\label{subsubsec:metricas-sync}
+(En desarrollo...)
+
+\section{Ordenación agregada: orden de consenso}
+\label{sec:agregacion}
+% Aportación 3: consolidar las K ordenaciones parciales (remuestreos de genes
+% TOP) en un único orden de consenso mediante agregación de órdenes circulares
+% (Barragán, Rueda y Fernández, 2015; TSP3/HODs). Mejora robustez y estabilidad
+% del orden final. Referencia de código: circular_aggregation.py, robust_order.py.
+(En desarrollo...)
+
+\section{Marco de validación y métricas de similitud}
+\label{sec:validacion}
+% Aportación 4: generación de datos sintéticos con orden temporal conocido +
+% nuevas fórmulas que cuantifican correlación y similitud entre orden estimado
+% y real (coeficiente de correlación circular robusto, medida de concordancia).
+% Referencia de código: validation/{generate_synthetic, metrics, validate}.py.
+% NOTA: aquí se DEFINEN las métricas; su aplicación a datos va en el cap. 3.
 (En desarrollo...)
 
 \chapter{Resultados y Simulaciones}
