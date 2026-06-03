@@ -569,45 +569,72 @@ donde $\bar x_w$ es la media ponderada de la expresión. La potencia $P$ mide cu
 
 \section{El problema de sincronización de órdenes circulares}
 \label{sec:sincronizacion}
-% Aportación 2 (la más desarrollada según la tutora). Avanza desde el anclaje
-% manual (ARNTL/DBP) hacia HyCIRCUST: sincronización híbrida in vivo/post mortem.
+
+La reconstrucción del orden temporal encadena en realidad dos problemas. El primero es estimar, a partir únicamente de la expresión, un orden circular de las muestras. El segundo, una vez obtenido ese orden, es anclarlo al tiempo biológico real, porque un orden circular no fija por sí solo ni dónde empieza el ciclo ni en qué sentido avanza. Esta sección formula ambos problemas y la ambigüedad que los conecta (Sección~\ref{subsec:2n-ordenes}), y describe después el procedimiento de sincronización que resuelve el segundo (Sección~\ref{subsec:hycircust}).
 
 \subsection{Formulación del problema y los $2n$ órdenes}
 \label{subsec:2n-ordenes}
-% Formular matemáticamente la estimación del orden temporal a nivel
-% metodológico y explicar POR QUÉ aparecen los 2n órdenes (rotación + dos
-% orientaciones). Guía: artículo CIRCUST (main + suplementario) y los dos
-% documentos aportados por la tutora.  [PENDIENTE: pedir esos 2 documentos.]
-(En desarrollo...)
 
-\subsection{Algoritmo de minimización para la sincronización}
+Partimos de la matriz de expresión $\mathbf{X}=[\mathbf{x}_1,\dots,\mathbf{x}_n]\in\mathbb{R}^{G\times n}$ introducida en la Sección~\ref{sec:circust}, cuyas $n$ columnas son las muestras y cuyos tiempos de recogida $t_1,\dots,t_n$ son desconocidos. Estimar el orden temporal equivale a hallar una permutación de las muestras,
+\begin{equation}
+    \pi:\{1,\dots,n\}\to\{1,\dots,n\},
+    \label{eq:permutacion}
+\end{equation}
+tal que la matriz reordenada $\mathbf{X}_\pi = [\mathbf{x}_{\pi(1)},\dots,\mathbf{x}_{\pi(n)}]$ refleje la progresión temporal latente en los datos. Por la periodicidad del ciclo, el orden que induce esa permutación no es lineal sino circular. Siguiendo a Larriba et al. \cite{larriba2020}, el problema se plantea como una minimización,
+\begin{equation}
+    \pi^* = \arg\min_{\pi} C(\mathbf{X}_\pi),
+    \label{eq:orden-min}
+\end{equation}
+donde $C$ es una función de coste, definida habitualmente en términos de distancias, que cuantifica cuánto se aparta cada permutación de la estructura oscilatoria esperada.
+
+Resolver la minimización~\eqref{eq:orden-min} de forma exacta no es viable. El número de órdenes circulares distintos para $n$ muestras es $(n-1)!$, de modo que el problema es NP-hard y su exploración exhaustiva resulta imposible salvo para valores muy pequeños de $n$. Por ello se recurre a aproximaciones, como la basada en el Problema del Viajante de Comercio \cite{larriba2020} o, en el caso de CIRCUST, la propia reducción de dimensionalidad mediante CPCA (Sección~\ref{subsec:cpca-formal}). En esta última, la proyección de las muestras sobre el círculo unidad asigna a cada una un ángulo $\varphi_i$, y la ordenación creciente de esos ángulos proporciona directamente un orden circular que se adopta como solución inicial $\pi^*$.
+
+Ese orden circular es, sin embargo, \emph{relativo}. La proyección del CPCA recupera la disposición cíclica de las muestras, pero no determina dos elementos que la expresión, por sí sola, no contiene. El primero es el punto de arranque del ciclo, es decir, el origen de la escala. El segundo es el sentido de giro, horario o antihorario. Para un orden circular de $n$ muestras existen, en consecuencia, $2n$ configuraciones temporales compatibles, fruto de combinar las $n$ posibles elecciones de origen con los $2$ sentidos de avance. Todas representan el mismo orden relativo y son indistinguibles a partir de la expresión, ya que en los datos no hay ninguna referencia de tiempo absoluto.
+
+Elegir, de entre esas $2n$ configuraciones, la que se corresponde con el tiempo biológico real es el problema de sincronización. Su resolución exige información externa, en concreto el conocimiento de la fase de algunos genes reloj cuya expresión temporal está bien caracterizada y que actúan como anclas. El procedimiento que fija el origen y el sentido a partir de esas anclas se desarrolla en la Sección~\ref{subsec:hycircust}.
+
+\subsection{Sincronización mediante genes ancla}
 \label{subsec:hycircust}
-% HyCIRCUST: módulo que determina conjuntamente punto de arranque y orientación
-% del orden circular. Integra información temporal de tejidos periféricos in
-% vivo (genes core con etiqueta temporal) para mejorar comparabilidad entre
-% tejidos/estudios. Inspirado en el molecular timetable (Ueda 2004; Higashi
-% 2016). Formula la sincronización como alineación en el círculo de los
-% instantes de máxima expresión (estimados vía FMM1 sobre genes core):
-% busca la rotación y orientación que maximizan la concordancia entre el
-% tejido de referencia (in vivo) y el objetivo (post mortem). Se aproxima
-% como un problema de regresión circular.
-(En desarrollo...)
 
-\subsubsection{Información adicional}
-\label{subsubsec:info-adicional}
-(En desarrollo...)
+De entre las $2n$ configuraciones compatibles con el orden circular estimado, la sincronización selecciona la que se corresponde con el tiempo biológico real. La versión actual del algoritmo lo resuelve apoyándose en un conjunto fijo de genes ancla y en tres supuestos biológicos bien establecidos \cite{larriba2023}.
 
-\subsubsection{Métricas de evaluación}
-\label{subsubsec:metricas-sync}
-(En desarrollo...)
+El primer supuesto fija el origen. El pico del gen \textit{ARNTL}, estimado mediante el modelo FMM, se sitúa en $\pi$. Como \textit{ARNTL} alcanza su máximo en anticipación del periodo inactivo, esta convención permite interpretar el intervalo $[0,\pi)$ como periodo de luz inferido y $[\pi,2\pi)$ como periodo de oscuridad. Los otros dos supuestos fijan el sentido de giro. Por un lado, el gen \textit{DBP} alcanza su pico después de los genes de fase ROR (\textit{ARNTL}, \textit{NPAS}, \textit{CLOCK}). Por otro, la mayoría de los genes reloj presentan su máximo durante el periodo activo $[0,\pi)$.
+
+A partir de estos supuestos, el procedimiento opera en dos pasos. Primero rota la escala circular para que el pico de \textit{ARNTL} quede en $\pi$, lo que ancla el origen. Después determina la orientación con el gen de dirección \textit{DBP}. Si su pico cae en la mitad incorrecta del ciclo respecto a \textit{ARNTL}, se invierte el sentido de la escala. Una verificación de consistencia con el resto de genes reloj refina esa decisión, comprobando que la mayoría de sus picos caen en $[0,\pi)$ y que se respeta el orden esperado entre \textit{DBP}, \textit{CRY1} y \textit{ARNTL}. El resultado es una escala circular alineada con el tiempo biológico, sobre la que cada gen reloj queda clasificado como diurno o nocturno según la posición de su pico.
+
+\paragraph{Extensión futura: sincronización híbrida.} El procedimiento anterior depende de un conjunto de genes ancla fijado de antemano. Una extensión natural es una sincronización híbrida que formule el anclaje como un problema de regresión circular, buscando la rotación y la orientación que maximizan la concordancia entre los instantes de máxima expresión estimados en el tejido objetivo (post mortem) y los de un tejido de referencia con etiqueta temporal (in vivo), inspirándose en la metodología del \textit{molecular timetable} \cite{ueda2004}. Este enfoque permitiría además automatizar la selección del ancla y reducir la dependencia de un gen prefijado. Su desarrollo se deja como trabajo futuro, a incorporar si el alcance del proyecto lo permite.
 
 \section{Ordenación agregada: orden de consenso}
 \label{sec:agregacion}
-% Aportación 3: consolidar las K ordenaciones parciales (remuestreos de genes
-% TOP) en un único orden de consenso mediante agregación de órdenes circulares
-% (Barragán, Rueda y Fernández, 2015; TSP3/HODs). Mejora robustez y estabilidad
-% del orden final. Referencia de código: circular_aggregation.py, robust_order.py.
-(En desarrollo...)
+
+La estimación robusta del orden (Sección~\ref{subsec:topgenes-intro}) no produce un único orden, sino $K$. CIRCUST reestima el orden circular sobre $K$ subconjuntos aleatorios de los genes TOP, y cada repetición devuelve una ordenación de las muestras ligeramente distinta. En lugar de quedarse con una de ellas, esta aportación consolida las $K$ ordenaciones en un único \emph{orden de consenso}, lo que estabiliza la estimación final y reduce su dependencia de una selección concreta de genes. La herramienta para hacerlo es la agregación de órdenes circulares de Barragán, Rueda y Fernández \cite{barragan2015}.
+
+Agregar órdenes sobre el círculo no equivale a promediarlos. La aproximación euclídea habitual, promediar las posiciones o aplicar el método de Borda, falla en este contexto porque el conjunto de vectores que satisfacen un orden circular no es convexo. Dos repeticiones pueden compartir el mismo orden circular y, aun así, la media de sus ángulos no respetarlo. Se necesita, por tanto, un criterio definido directamente sobre el círculo.
+
+Sea $\theta^{(k)}=(\theta^{(k)}_1,\dots,\theta^{(k)}_n)$ el vector de fases que la repetición $k=1,\dots,K$ asigna a las $n$ muestras. Para medir cuánto se ajusta una ordenación candidata $O$ a esas fases, se emplea el estimador de regresión isotónica circular (CIRE), que es el vector $\tilde\theta^{(O,k)}$ más cercano a las observaciones de entre los que respetan el orden $O$, según la suma de errores circulares,
+\begin{equation}
+    \tilde\theta^{(O,k)} = \arg\min_{\alpha\,\sim\, O}\;\sum_{i=1}^{n}\big(1-\cos(\theta^{(k)}_i-\alpha_i)\big).
+    \label{eq:cire}
+\end{equation}
+La distancia entre la repetición $k$ y el orden $O$ es el promedio de esos errores, conocido como media de la suma de errores circulares (MSCE),
+\begin{equation}
+    d(\theta^{(k)},O)=\frac{1}{n}\sum_{i=1}^{n}\big(1-\cos(\theta^{(k)}_i-\tilde\theta^{(O,k)}_i)\big),
+    \label{eq:msce}
+\end{equation}
+y el orden de consenso es el que minimiza la distancia agregada sobre las $K$ repeticiones,
+\begin{equation}
+    O^* = \arg\min_{O}\;\sum_{k=1}^{K}\omega_k\,d(\theta^{(k)},O),
+    \label{eq:consenso}
+\end{equation}
+donde los pesos $\omega_k$ permiten dar más importancia a las repeticiones más fiables.
+
+Igual que el problema de estimación del orden (Sección~\ref{subsec:2n-ordenes}), esta minimización es NP-hard, por lo que se resuelve de forma aproximada en dos pasos. Primero se construye un orden inicial y después se refina con búsquedas locales que reordenan tríos de muestras consecutivas. Para el primer paso existen dos familias de métodos.
+
+La primera, basada en información \emph{por pares} y la única implementada por ahora, reduce el problema a un Problema del Viajante de Comercio (TSP). Cada repetición se representa como un grafo dirigido cuyos nodos son las muestras y cuyas aristas miden la preferencia de una muestra sobre otra. Al agregar esas aristas entre repeticiones, el orden de consenso es el recorrido más corto que visita cada muestra una sola vez. La variante empleada, \textbf{TSP3}, usa una distancia dirigida que penaliza con un factor $\alpha=3$ los avances en el sentido equivocado. Su interpretación es intuitiva. Un viajero que rebasa una parada debe volver atrás y recorrer de nuevo el tramo, con lo que acaba cubriendo tres veces esa distancia.
+
+La segunda familia, basada en información \emph{por tríos} y propuesta como extensión futura, se apoya en la teoría de Hodge. Como un trío es el conjunto más pequeño que admite un orden sobre el círculo, esta representación es la natural para datos circulares y combina bien información de fuentes con orígenes distintos. El orden de consenso se obtiene resolviendo un problema de mínimos cuadrados sobre las preferencias entre tríos, y sus variantes, en particular HODs, son computacionalmente eficientes y robustas frente a datos incompletos. Según el estudio original \cite{barragan2015}, ningún método es uniformemente superior, pero TSP3 y HODs son los más competitivos.
+
+En la implementación actual, el orden de consenso se calcula por defecto con TSP3, mientras que la variante de Hodge queda propuesta como trabajo futuro. Una vez fijado ese orden de consenso, se reajusta el modelo FMM sobre él para obtener los parámetros finales del atlas circadiano del tejido.
 
 \section{Marco de validación y métricas de similitud}
 \label{sec:validacion}
@@ -764,6 +791,21 @@ Nucleic Acids Research, 44(8):e80. \url{https://doi.org/10.1093/nar/gkw030}
 Braun, R., Kath, W. L., Iwanaszko, M., Kula-Eversole, E., Abbott, S. M., Reid, K. J., Zee, P. C., y Allada, R. (2018).
 \textit{Universal method for robust detection of circadian state from gene expression}.
 Proceedings of the National Academy of Sciences of the United States of America, 115(39):E9247--E9256. \url{https://doi.org/10.1073/pnas.1800314115}
+
+\bibitem{larriba2020}
+Larriba, Y., Rueda, C., Fernández, M. A., y Peddada, S. D. (2020).
+\textit{Order restricted inference in chronobiology}.
+Statistics in Medicine, 39(3):265--278. \url{https://doi.org/10.1002/sim.8397}
+
+\bibitem{ueda2004}
+Ueda, H. R., Chen, W., Minami, Y., Honma, S., Honma, K., Iino, M., y Hashimoto, S. (2004).
+\textit{Molecular-timetable methods for detection of body time and rhythm disorders from single-time-point genome-wide expression profiles}.
+Proceedings of the National Academy of Sciences of the United States of America, 101(31):11227--11232. \url{https://doi.org/10.1073/pnas.0401882101}
+
+% TODO: completar la revista/volumen/páginas de Barragán et al. (formato IEEE; venue a confirmar).
+\bibitem{barragan2015}
+Barragán, S., Rueda, C., y Fernández, M. A. (2015).
+\textit{Circular Rank Aggregation and its Application to Cell-cycle Genes Expressions}.
 
 \end{thebibliography}
 
