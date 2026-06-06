@@ -335,6 +335,10 @@ def main() -> None:
     cfg = DEFAULT_CONFIG.copy()
     t_start = time.time()
 
+    # Cronometro por etapas (perf_counter): se vuelca a manifest.json para
+    # los benchmarks de tiempo (Exp 1 R vs Python y Exp 2/3 del grid).
+    timing: dict[str, float] = {}
+
     # ── Resolver entradas ────────────────────────────────────────────────
     data_path = Path(args.data) if args.data else (PROJECT_ROOT / "data" / "matrixIn.parquet")
     gene_column   = _resolve_gene_column(data_path, args.gene_column)
@@ -364,29 +368,36 @@ def main() -> None:
     # Etapa 0 — Cargar datos
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 0: Cargando matriz de expresion")
+    _t = time.perf_counter()
     raw_matrix = load_expression_matrix(str(data_path), gene_column=gene_column)
+    timing["load"] = time.perf_counter() - _t
     print(f"  Cargado: {raw_matrix.shape[0]} genes x {raw_matrix.shape[1]} muestras")
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 1.0 — Preprocesamiento
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.0: Preprocesamiento")
+    _t = time.perf_counter()
     prep = Preprocessor(
         sparse_threshold=cfg["sparse_threshold"],
         verbose=True,
     ).run(raw_matrix)
+    timing["preprocess"] = time.perf_counter() - _t
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 1.1a — Seleccion de genes core
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.1a: Seleccion de Genes Core")
+    _t = time.perf_counter()
     core_result = core_selector.select(prep.expr_norm)
     core_genes  = core_result.genes
+    timing["core_genes"] = time.perf_counter() - _t
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 1.1 — CPCA + deteccion de outliers
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 1.1: PCA Circular")
+    _t = time.perf_counter()
     cpca_result = CPCA(
         core_genes            = core_genes,
         n_outlier_candidates  = cfg["n_outlier_candidates"],
@@ -400,22 +411,26 @@ def main() -> None:
         fmm_method            = args.fmm_method,
         verbose               = True,
     ).run(prep.expr_norm)
+    timing["cpca"] = time.perf_counter() - _t
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 2 — Sincronizador (orden preliminar)
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 2: Ordenamiento Circular Preliminar")
+    _t = time.perf_counter()
     core_genes_found = list(cpca_result.core_genes_found)
     order_result = CircularSynchronizer(
         anchor_gene    = cfg["anchor_gene"],
         direction_gene = cfg["direction_gene"],
         verbose        = True,
     ).run(cpca_result, core_genes_found)
+    timing["preliminary_order"] = time.perf_counter() - _t
 
     # ─────────────────────────────────────────────────────────────────────
     # Etapa 3 — Seleccion de genes TOP
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 3: Seleccion de Genes TOP")
+    _t = time.perf_counter()
     top_result = TopGeneSelector(
         r2_ori_threshold      = 0.5,
         r2_fmm_threshold      = 0.5,
@@ -434,6 +449,7 @@ def main() -> None:
         seed_genes     = core_genes_found,
         sample_order   = order_result.sample_order,
     )
+    timing["top_genes"] = time.perf_counter() - _t
     print(f"  Matriz TOP: {top_result.candidate_matrix.shape[0]} genes x "
           f"{top_result.candidate_matrix.shape[1]} muestras")
 
@@ -441,6 +457,7 @@ def main() -> None:
     # Etapa 4 — Estimacion robusta del orden
     # ─────────────────────────────────────────────────────────────────────
     _banner("Etapa 4: Estimacion Robusta del Orden")
+    _t = time.perf_counter()
     robust_result = RobustOrderEstimator(
         n_reps               = args.n_reps,
         sample_size_fraction = 2.0 / 3.0,
@@ -455,7 +472,7 @@ def main() -> None:
         fmm_num_reps         = cfg["fmm_reps"],
         fmm_method           = args.fmm_method,
         lambda_star          = cpca_result.lambda_star,   # heredado si stabilized
-        n_jobs               = 1,
+        n_jobs               = -1,   # paralelo: el ajuste FMM por gen es el cuello de botella
         seed                 = args.seed,
         verbose              = True,
     ).run(
@@ -463,6 +480,7 @@ def main() -> None:
         expr_full_norm = order_result.expr_ordered,
         core_genes     = core_genes_found,
     )
+    timing["robust_order"] = time.perf_counter() - _t
 
     # ─────────────────────────────────────────────────────────────────────
     # Salida 1: orden de MUESTRAS — UNA FILA POR MUESTRA
@@ -491,6 +509,7 @@ def main() -> None:
     # phase, omega) y clasificacion day/night. Construido re-ajustando
     # FMM sobre el orden de muestras consenso (en aggregate) o tomando
     # los parametros de la rep seleccionada (en best_k).
+    _t = time.perf_counter()
     atlas_df = _build_atlas(
         robust_result = robust_result,
         top_result    = top_result,
@@ -498,6 +517,7 @@ def main() -> None:
         fmm_method    = args.fmm_method,
         cfg           = cfg,
     )
+    timing["build_atlas"] = time.perf_counter() - _t
     atlas_df.to_csv(output_dir / "circust_atlas.csv", index=False)
     print(f"    Saved: circust_atlas.csv  ({len(atlas_df)} genes TOP)")
 
@@ -522,6 +542,10 @@ def main() -> None:
             "lambda_star":   cpca_result.lambda_star,
         },
         "seed":      args.seed,
+        "timing": {
+            **{k: round(v, 4) for k, v in timing.items()},
+            "elapsed_total_s": round(time.time() - t_start, 4),
+        },
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
