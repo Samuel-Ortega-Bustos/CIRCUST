@@ -317,10 +317,21 @@ Las etapas que componen el algoritmo son las siguientes:
 
 El resultado final es, por un lado, el \textbf{orden temporal de las muestras} (una fase $\varphi_i\in[0,2\pi)$, traducible a horas) y, por otro, el \textbf{atlas circadiano} del tejido: para cada gen rítmico, sus parámetros estimados (amplitud, fase del pico, asimetría y bondad de ajuste).
 
+\subsection{Los genes reloj de partida}
+\label{subsec:core-genes}
+
+Antes de detallar las etapas conviene presentar el ingrediente que varias de ellas comparten, el conjunto de \emph{genes reloj} de partida, también llamados genes semilla o genes \textit{core}. CIRCUST no trabaja con los miles de genes de la matriz de expresión, sino con un subconjunto reducido y fijo de genes del reloj circadiano cuya expresión está bien caracterizada. La lista por defecto la forman los doce genes del \textit{core clock}: \textit{PER1--3}, \textit{CRY1--2}, \textit{ARNTL}, \textit{CLOCK}, \textit{NR1D1}, \textit{RORA}, \textit{DBP}, \textit{TEF} y \textit{STAT3}. Esta selección recoge genes identificados como rítmicos en atlas de expresión circadiana de mamíferos y humanos \cite{zhang2014, CYCLOPS, ruben2018, wu2018, mure2018}. El carácter rítmico de \textit{STAT3}, menos evidente que el del resto, se ha documentado además en sangre humana \cite{lech2016, bozek2009}.
+
+La elección tiene una justificación estadística. Estos genes son rítmicos por construcción biológica, ya que forman parte del bucle de retroalimentación que gobierna el reloj molecular (el \textit{core clock} descrito en la Introducción). Por ello, la principal fuente de variación entre sus perfiles de expresión es la hora del día, y restringir el análisis a ellos concentra la señal circadiana frente al ruido de fondo de los genes no rítmicos.
+
+Estos genes intervienen en dos etapas del algoritmo con papeles distintos. En la ordenación preliminar actúan como semilla del CPCA, que calcula la proyección circular únicamente sobre su submatriz. En la sincronización, un subconjunto de ellos, de fase conocida, actúa como ancla. En concreto, \textit{ARNTL} fija el origen de la escala y \textit{DBP}, junto con \textit{CRY1}, determina el sentido de giro (Sección~\ref{subsec:hycircust}).
+
+El conjunto de genes de partida no está fijado en el código, sino que es un parámetro del método. Puede sustituirse por otras listas predefinidas o por una selección propia, adaptada al conjunto de datos o a la especie en estudio, lo que enlaza con la arquitectura modular descrita en la Sección~\ref{sec:implementacion}. En cualquier caso, la estimación es robusta frente a la elección concreta de la lista. Un análisis de sensibilidad que recalcula el orden dejando fuera un gen semilla cada vez muestra una correlación circular mediana de aproximadamente $0{,}969$ entre el orden original y los recalculados \cite{larriba2023}, lo que indica que ningún gen individual condiciona el resultado. Por su papel en la sincronización, \textit{ARNTL}, \textit{DBP} y \textit{CRY1} se mantienen siempre en el conjunto.
+
 \subsection{Ordenación circular mediante CPCA}
 \label{subsec:cpca-intro}
 
-El primer pilar de CIRCUST es la obtención de un orden circular preliminar. En lugar de aplicar el Análisis de Componentes Principales (PCA) a los miles de genes de la matriz, CIRCUST lo restringe a un conjunto reducido de \emph{genes reloj} bien caracterizados (por defecto, los doce genes del \textit{core clock}: \textit{PER1--3}, \textit{CRY1--2}, \textit{ARNTL}, \textit{CLOCK}, \textit{NR1D1}, \textit{RORA}, \textit{DBP}, \textit{TEF} y \textit{STAT3}). La razón es estadística: estos genes son rítmicos por construcción biológica, de modo que la principal fuente de variación entre sus perfiles es, justamente, la hora del día. Concentrar el PCA en ellos hace que las primeras componentes capturen la señal circadiana en vez del ruido de fondo.
+El primer pilar de CIRCUST es la obtención de un orden circular preliminar. En lugar de aplicar el Análisis de Componentes Principales (PCA) a los miles de genes de la matriz, CIRCUST lo restringe a la submatriz de los genes reloj de partida presentados en la Sección~\ref{subsec:core-genes}. Concentrar el PCA en genes rítmicos por construcción biológica hace que las primeras componentes capturen la señal circadiana en vez del ruido de fondo.
 
 A partir de la matriz normalizada de genes reloj, el CPCA extrae las dos primeras componentes principales y trata sus puntuaciones para cada muestra $i$ como coordenadas en el plano, $(\text{PC1}_i, \text{PC2}_i)$. La posición angular de cada muestra respecto al origen define su fase preliminar:
 \begin{equation}
@@ -776,6 +787,31 @@ Talamanca, L., et al. (2023).
 \textit{Sex-dimorphic and age-dependent organization of 24-hour gene expression rhythms in humans}.
 Science, 379(6631):478-483. \url{https://doi.org/10.1126/science.add0846}
 % (Nota: Talamanca et al. son los creadores y máximos exponentes del uso del algoritmo CHIRAL sobre los datos del GTEx).
+
+\bibitem{ruben2018}
+Ruben, M. D., Wu, G., Smith, D. F., Schmidt, R. E., Francey, L. J., Lee, Y. Y., et al. (2018).
+\textit{A database of tissue-specific rhythmically expressed human genes has potential applications in circadian medicine}.
+Science Translational Medicine, 10(458):eaat8806. \url{https://doi.org/10.1126/scitranslmed.aat8806}
+
+\bibitem{wu2018}
+Wu, G., Ruben, M. D., Schmidt, R. E., Francey, L. J., Smith, D. F., Anafi, R. C., et al. (2018).
+\textit{Population-level rhythms in human skin with implications for circadian medicine}.
+Proceedings of the National Academy of Sciences of the United States of America, 115(48):12313--12318. \url{https://doi.org/10.1073/pnas.1809442115}
+
+\bibitem{mure2018}
+Mure, L. S., Le, H. D., Benegiamo, G., Chang, M. W., Rios, L., Jillani, N., et al. (2018).
+\textit{Diurnal transcriptome atlas of a primate across major neural and peripheral tissues}.
+Science, 359(6381):eaao0318. \url{https://doi.org/10.1126/science.aao0318}
+
+\bibitem{lech2016}
+Lech, K., Ackermann, K., Revell, V. L., Lao, O., Skene, D. J., y Kayser, M. (2016).
+\textit{Dissecting daily and circadian expression rhythms of clock-controlled genes in human blood}.
+Journal of Biological Rhythms, 31(1):68--81. \url{https://doi.org/10.1177/0748730415611761}
+
+\bibitem{bozek2009}
+Bozek, K., Relógio, A., Kielbasa, S. M., Heine, M., Dame, C., Kramer, A., et al. (2009).
+\textit{Regulation of clock-controlled genes in mammals}.
+PLOS ONE, 4(3):e4882. \url{https://doi.org/10.1371/journal.pone.0004882}
 
 \bibitem{cosinor}
 Cornelissen, G. (2014).
