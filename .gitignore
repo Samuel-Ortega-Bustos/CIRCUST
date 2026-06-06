@@ -7,6 +7,9 @@
 *.egg-info/
 /output/*
 __pycache__/
+# Artefactos compilados del benchmark R (busquedaMejor.c -> .so); se recompilan
+rscripts/*.so
+rscripts/*.o
 docs/*
 !/docs/main.tex
 !/docs/images/
