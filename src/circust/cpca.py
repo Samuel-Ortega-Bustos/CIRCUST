@@ -241,11 +241,18 @@ class CPCA:
         fmm_num_reps:             int       = 3,
         fmm_method:               str       = "base",
         fmm_stab_kwargs:          dict|None = None,
+        compute_fmm_fits:         bool      = True,
         verbose:                  bool      = True,
     ) -> None:
         if fmm_method not in ("base", "stabilized"):
             raise ValueError(f"fmm_method debe ser 'base' o 'stabilized', recibido: {fmm_method!r}")
         self.core_genes               = core_genes if core_genes is not None else SEED_GENES_DEFAULT
+        # compute_fmm_fits=False salta el ajuste FMM/Cosinor (initial+final) y
+        # la deteccion de outliers. Solo valido cuando al llamante le basta con
+        # sample_order/circular_scale (vienen de la descomposicion CPCA, no del
+        # FMM) y no elimina outliers (max_outlier_fraction=0). Lo usa
+        # RobustOrder por replica para evitar ~el 77% del coste, que se tiraba.
+        self.compute_fmm_fits         = compute_fmm_fits
         self.n_outlier_candidates     = n_outlier_candidates
         self.tight_radius             = tight_radius
         self.loose_radius             = loose_radius
@@ -325,6 +332,40 @@ class CPCA:
         self._log(f"  Outliers radiales CPCA (LEi < {self.tight_radius}): {len(outlier_idx)}")
 
         # ── Paso 3: ajuste FMM + Cosinor en orden inicial ────────────────
+        # Atajo: si no se piden los ajustes FMM (compute_fmm_fits=False), se
+        # saltan _fit_initial + deteccion de outliers + _fit_final. Solo es
+        # valido cuando al llamante le basta sample_order/circular_scale y no
+        # se eliminan outliers; sample_order/circular_scale no dependen del FMM.
+        if not self.compute_fmm_fits:
+            fmm_fits_ini, cos_fits_ini, std_res_df = {}, {}, None
+            cpca_outs, fmm_outs, all_dropped = [], [], []
+            pc1_initial, pc2_initial = pc1.copy(), pc2.copy()
+            core_norm_clean = core_matrix
+            expr_norm_final = self._order_full_matrix(expr_norm, all_dropped, sample_order)
+            fmm_fits_fin, fmm_peaks_fin = {}, {}
+            result = CPCAResult(
+                sample_order         = sample_order,
+                circular_scale       = circular_scale,
+                core_genes_found     = genes_found,
+                variance_explained   = var_exp,
+                expr_norm_final      = expr_norm_final,
+                core_norm_final      = core_norm_clean.iloc[:, sample_order],
+                fmm_fits_final       = fmm_fits_fin,
+                fmm_peak_times_final = fmm_peaks_fin,
+                samples_dropped      = list(all_dropped),
+                fmm_outliers         = fmm_outs,
+                pc1                  = pc1,
+                pc2                  = pc2,
+                pc3                  = pc3,
+                std_residuals_fmm    = std_res_df,
+                fmm_fits_initial     = fmm_fits_ini,
+                cosinor_fits_initial = cos_fits_ini,
+                pc1_initial          = pc1_initial,
+                pc2_initial          = pc2_initial,
+                lambda_star          = self._cached_lambda_star,
+            )
+            return result
+
         self._log("=== Etapa 1.2: Deteccion de Outliers ===")
         self._log("  Ajustando FMM y Cosinor en genes core (orden inicial) ...")
         fmm_fits_ini, cos_fits_ini, std_res_df = self._fit_initial(

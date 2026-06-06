@@ -744,6 +744,7 @@ class RobustOrderEstimator:
                 max_outlier_fraction = 0.0,
                 fmm_method           = self.fmm_method,
                 fmm_stab_kwargs      = cpca_stab_kwargs,
+                compute_fmm_fits     = False,  # solo se usan sample_order/circular_scale
                 verbose              = False,
             ).run(sub_df)
             order_k = cpca_k.sample_order
